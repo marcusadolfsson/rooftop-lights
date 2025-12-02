@@ -14,13 +14,14 @@ router.get('/config', (req: Request, res: Response) => {
     mode: config.mode,
     unicastAddress: config.unicast_address,
     universe: config.universe,
+    refreshRate: config.refresh_rate || 40,
   });
 });
 
 // Update ArtNet configuration
 router.put('/config', (req: Request, res: Response) => {
   const db = getDatabase();
-  const { mode, unicastAddress, universe } = req.body;
+  const { mode, unicastAddress, universe, refreshRate } = req.body;
 
   // Validate mode
   if (mode !== 'multicast' && mode !== 'unicast') {
@@ -40,20 +41,29 @@ router.put('/config', (req: Request, res: Response) => {
     return;
   }
 
+  // Validate refresh rate
+  const fps = Math.max(1, Math.min(44, refreshRate || 40));
+
   db.prepare(`
     UPDATE artnet_config
-    SET mode = ?, unicast_address = ?, universe = ?
+    SET mode = ?, unicast_address = ?, universe = ?, refresh_rate = ?
     WHERE id = 1
-  `).run(mode, unicastAddress || null, universe);
+  `).run(mode, unicastAddress || null, universe, fps);
 
-  // Reinitialize ArtNet controller with new config
+  // Update ArtNet controller with new config
+  const controller = getArtNetController();
   const config: ArtNetConfig = {
     mode,
     unicastAddress,
     universe,
+    refreshRate: fps,
   };
 
-  initArtNet(config);
+  if (controller) {
+    controller.updateConfig(config);
+  } else {
+    initArtNet(config);
+  }
 
   res.json({ success: true });
 });

@@ -11,6 +11,7 @@ export interface ArtNetConfig {
   mode: 'multicast' | 'unicast';
   unicastAddress?: string;
   universe: number;
+  refreshRate: number; // FPS (1-44)
 }
 
 export class ArtNetController {
@@ -42,8 +43,8 @@ export class ArtNetController {
       this.isRunning = true;
       console.log('ArtNet controller started');
 
-      // Send DMX at ~44Hz (standard DMX refresh rate)
-      this.intervalId = setInterval(() => this.sendDMX(), 23);
+      // Send DMX at configured refresh rate
+      this.startInterval();
     });
   }
 
@@ -65,7 +66,26 @@ export class ArtNetController {
   }
 
   updateConfig(config: ArtNetConfig): void {
+    const refreshRateChanged = this.config.refreshRate !== config.refreshRate;
     this.config = config;
+
+    // Restart interval if refresh rate changed
+    if (refreshRateChanged && this.isRunning) {
+      this.startInterval();
+    }
+  }
+
+  private startInterval(): void {
+    if (this.intervalId) {
+      clearInterval(this.intervalId);
+    }
+
+    // Clamp refresh rate between 1 and 44 FPS
+    const fps = Math.max(1, Math.min(44, this.config.refreshRate || 40));
+    const intervalMs = Math.round(1000 / fps);
+
+    console.log(`ArtNet refresh rate: ${fps} FPS (${intervalMs}ms interval)`);
+    this.intervalId = setInterval(() => this.sendDMX(), intervalMs);
   }
 
   setChannel(channel: number, value: number): void {

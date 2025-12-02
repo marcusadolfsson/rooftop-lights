@@ -98,10 +98,11 @@ async function initialize(): Promise<void> {
     mode: artnetConfig.mode,
     unicastAddress: artnetConfig.unicast_address,
     universe: artnetConfig.universe,
+    refreshRate: artnetConfig.refresh_rate || 40,
   };
 
   initArtNet(config);
-  console.log(`ArtNet started in ${config.mode} mode, universe ${config.universe}`);
+  console.log(`ArtNet started in ${config.mode} mode, universe ${config.universe}, ${config.refreshRate} FPS`);
 
   // Initialize effect engine
   console.log('Initializing effect engine...');

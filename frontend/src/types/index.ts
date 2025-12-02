@@ -100,6 +100,7 @@ export interface ArtNetConfig {
   mode: 'multicast' | 'unicast';
   unicastAddress?: string;
   universe: number;
+  refreshRate: number;
 }
 
 export interface LayoutData {

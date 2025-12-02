@@ -165,6 +165,24 @@ function LayoutPage() {
                 max="32767"
               />
             </div>
+
+            <div className="form-group">
+              <label className="form-label">Refresh Rate: {artnetConfig.refreshRate} FPS</label>
+              <input
+                type="range"
+                className="form-input"
+                value={artnetConfig.refreshRate}
+                onChange={(e) =>
+                  setArtnetConfig({ ...artnetConfig, refreshRate: parseInt(e.target.value) || 40 })
+                }
+                min="1"
+                max="44"
+                style={{ padding: 0 }}
+              />
+              <small style={{ color: 'var(--text-secondary)', display: 'block', marginTop: '0.25rem' }}>
+                1-44 FPS (40 recommended for motion effects)
+              </small>
+            </div>
           </div>
         )}
       </div>

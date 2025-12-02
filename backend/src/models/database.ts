@@ -49,9 +49,16 @@ function initializeTables(): void {
       id INTEGER PRIMARY KEY CHECK (id = 1),
       mode TEXT DEFAULT 'multicast',
       unicast_address TEXT,
-      universe INTEGER DEFAULT 0
+      universe INTEGER DEFAULT 0,
+      refresh_rate INTEGER DEFAULT 40
     )
   `);
+
+  // Migration: Add refresh_rate column if it doesn't exist
+  const columns = database.prepare("PRAGMA table_info(artnet_config)").all() as { name: string }[];
+  if (!columns.some(col => col.name === 'refresh_rate')) {
+    database.exec('ALTER TABLE artnet_config ADD COLUMN refresh_rate INTEGER DEFAULT 40');
+  }
 
   // Designs table
   database.exec(`
@@ -109,7 +116,7 @@ function initializeTables(): void {
   // Initialize default ArtNet config if not exists
   const artnetConfig = database.prepare('SELECT id FROM artnet_config WHERE id = 1').get();
   if (!artnetConfig) {
-    database.prepare('INSERT INTO artnet_config (id, mode, universe) VALUES (1, ?, ?)').run('multicast', 0);
+    database.prepare('INSERT INTO artnet_config (id, mode, universe, refresh_rate) VALUES (1, ?, ?, ?)').run('multicast', 0, 40);
   }
 
   // Initialize default walls if not exists
