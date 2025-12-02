@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  rooftop-lights:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+      - "6454:6454/udp"  # ArtNet port
+    volumes:
+      - ./data:/app/data
+    environment:
+      - NODE_ENV=production
+      - DATABASE_PATH=/app/data/rooftop-lights.db
+    restart: unless-stopped
+    networks:
+      - rooftop-network
+
+networks:
+  rooftop-network:
+    driver: bridge
