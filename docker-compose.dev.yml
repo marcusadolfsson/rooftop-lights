@@ -6,7 +6,7 @@ services:
       context: ./backend
       dockerfile: Dockerfile.dev
     ports:
-      - "3000:3000"
+      - "3030:3030"
       - "6454:6454/udp"
     volumes:
       - ./backend/src:/app/src

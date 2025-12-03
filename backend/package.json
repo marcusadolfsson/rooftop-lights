@@ -1,6 +1,7 @@
 {
   "name": "rooftop-lights-backend",
   "version": "1.0.0",
+  "type": "module",
   "description": "ArtNet-based architectural light control system",
   "main": "dist/index.js",
   "scripts": {
