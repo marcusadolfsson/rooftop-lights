@@ -32,7 +32,7 @@ COPY --from=frontend-build /app/frontend/dist ./public
 RUN mkdir -p /app/data
 
 # Expose ports
-EXPOSE 3000
+EXPOSE 3030
 EXPOSE 6454/udp
 
 # Start the application
