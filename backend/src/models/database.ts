@@ -1,5 +1,6 @@
 import Database from 'better-sqlite3';
 import path from 'path';
+import { v4 as uuidv4 } from 'uuid';
 
 const DB_PATH = process.env.DATABASE_PATH || path.join(process.cwd(), 'data', 'rooftop-lights.db');
 
@@ -127,8 +128,6 @@ function initializeTables(): void {
 }
 
 function initializeDefaultLayout(database: Database.Database): void {
-  const { v4: uuidv4 } = require('uuid');
-
   // Default wall configuration based on the specification
   const walls = [
     { id: uuidv4(), name: 'West', width: 13, height: 3, position: 0, connects_to_next: 1 },
