@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { HexColorPicker } from 'react-colorful';
 import { layoutAPI, designsAPI, playlistsAPI, previewAPI } from '../utils/api';
 import { useWebSocket } from '../hooks/useWebSocket';
@@ -29,7 +29,6 @@ function DesignPage() {
   const [selectedDesign, setSelectedDesign] = useState<Design | null>(null);
   const [currentColors, setCurrentColors] = useState<Record<number, RGBW>>({});
   const [selectedLights, setSelectedLights] = useState<Set<number>>(new Set());
-  const [colorPickerOpen, setColorPickerOpen] = useState(false);
   const [currentColor, setCurrentColor] = useState<RGBW>({ r: 255, g: 255, b: 255, w: 255 });
   const [isDragging, setIsDragging] = useState(false);
 
@@ -247,31 +246,6 @@ function DesignPage() {
       params[key] = param.default;
     });
     setMotionParams(params);
-  };
-
-  const saveMotionDesign = async () => {
-    if (!selectedEffect || !motionDesignName.trim()) {
-      setShowSaveModal(true);
-      return;
-    }
-
-    try {
-      await designsAPI.create({
-        name: motionDesignName,
-        type: 'motion',
-        data: {
-          type: selectedEffect.type,
-          colors: motionColors,
-          params: motionParams,
-          speed: 1,
-          scope: 'all',
-        },
-      });
-      await loadData();
-      setMotionDesignName('');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save motion design');
-    }
   };
 
   // Playlist mode functions
@@ -619,7 +593,7 @@ function DesignPage() {
           {/* Light Matrix */}
           {layout && (
             <div className="matrix-container">
-              {layout.walls.map((wall, wallIdx) => (
+              {layout.walls.map((wall) => (
                 <div key={wall.id} className="wall-section">
                   <div className="wall-header">
                     <h3 className="wall-title">{wall.name}</h3>

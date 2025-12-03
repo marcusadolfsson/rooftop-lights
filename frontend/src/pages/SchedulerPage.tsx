@@ -76,7 +76,7 @@ function SchedulerPage() {
       const data: {
         design_id?: string;
         playlist_id?: string;
-        design_type: string;
+        design_type: 'static' | 'motion' | 'playlist';
         start_date: string;
         end_date: string;
         priority: number;
