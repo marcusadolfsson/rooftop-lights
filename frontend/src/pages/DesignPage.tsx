@@ -36,7 +36,6 @@ function DesignPage() {
   const [selectedEffect, setSelectedEffect] = useState<EffectType | null>(null);
   const [motionColors, setMotionColors] = useState<RGBW[]>([]);
   const [motionParams, setMotionParams] = useState<Record<string, number | boolean>>({});
-  const [motionDesignName, setMotionDesignName] = useState('');
 
   // Playlist mode state
   const [selectedPlaylist, setSelectedPlaylist] = useState<Playlist | null>(null);
