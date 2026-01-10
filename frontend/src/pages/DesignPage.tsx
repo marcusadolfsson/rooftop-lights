@@ -55,6 +55,8 @@ function DesignPage() {
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
   const [showAiPanel, setShowAiPanel] = useState(false);
+  const [aiBaseDesignId, setAiBaseDesignId] = useState<string>('');
+  const [aiMode, setAiMode] = useState<'create' | 'modify' | 'derivative'>('create');
 
   useEffect(() => {
     loadData();
@@ -350,7 +352,11 @@ function DesignPage() {
     setAiError(null);
 
     try {
-      const result = await aiAPI.generate(aiDescription);
+      const result = await aiAPI.generate({
+        description: aiDescription,
+        baseDesignId: aiBaseDesignId || undefined,
+        mode: aiBaseDesignId ? aiMode : 'create',
+      });
 
       if (result.success && result.design) {
         // Reload designs to get the new one
@@ -461,14 +467,64 @@ function DesignPage() {
           </div>
           <p style={{ marginBottom: '1rem', color: 'var(--text-secondary)' }}>
             Describe the light show you want and AI will generate it for you.
+            You can also modify or create variations of existing designs.
           </p>
+
+          {/* Base Design Selection */}
+          <div className="form-row" style={{ marginBottom: '1rem' }}>
+            <div className="form-group" style={{ flex: 2 }}>
+              <label className="form-label">Base Design (optional)</label>
+              <select
+                className="form-select"
+                value={aiBaseDesignId}
+                onChange={(e) => {
+                  setAiBaseDesignId(e.target.value);
+                  if (!e.target.value) setAiMode('create');
+                }}
+                disabled={aiLoading}
+              >
+                <option value="">Start from scratch</option>
+                <optgroup label="Static Designs">
+                  {designs.filter(d => d.type === 'static').map(d => (
+                    <option key={d.id} value={d.id}>{d.name}</option>
+                  ))}
+                </optgroup>
+                <optgroup label="Motion Designs">
+                  {designs.filter(d => d.type === 'motion').map(d => (
+                    <option key={d.id} value={d.id}>{d.name}</option>
+                  ))}
+                </optgroup>
+              </select>
+            </div>
+            {aiBaseDesignId && (
+              <div className="form-group" style={{ flex: 1 }}>
+                <label className="form-label">Mode</label>
+                <select
+                  className="form-select"
+                  value={aiMode}
+                  onChange={(e) => setAiMode(e.target.value as 'modify' | 'derivative')}
+                  disabled={aiLoading}
+                >
+                  <option value="modify">Modify (update this design)</option>
+                  <option value="derivative">Derivative (create variation)</option>
+                </select>
+              </div>
+            )}
+          </div>
+
           <div className="form-group">
+            <label className="form-label">
+              {aiBaseDesignId ? 'What changes do you want?' : 'Describe your design'}
+            </label>
             <textarea
               className="form-input"
               rows={3}
               value={aiDescription}
               onChange={(e) => setAiDescription(e.target.value)}
-              placeholder="e.g., 'A warm sunset gradient fading from orange on the west wall to purple on the east' or 'Christmas lights with red and green candy cane stripes moving slowly'"
+              placeholder={aiBaseDesignId
+                ? "e.g., 'Make it warmer with more orange tones' or 'Speed up the animation and add more sparkle'"
+                : "e.g., 'A warm sunset gradient fading from orange on the west wall to purple on the east' or 'Christmas lights with red and green candy cane stripes moving slowly'"
+              }
               disabled={aiLoading}
               style={{ resize: 'vertical' }}
             />
@@ -484,7 +540,7 @@ function DesignPage() {
               onClick={generateAIDesign}
               disabled={aiLoading || !aiDescription.trim()}
             >
-              {aiLoading ? 'Generating...' : 'Generate Design'}
+              {aiLoading ? 'Generating...' : aiBaseDesignId ? `${aiMode === 'modify' ? 'Modify' : 'Create Variation'}` : 'Generate Design'}
             </button>
             {aiLoading && (
               <span style={{ color: 'var(--text-secondary)' }}>
@@ -499,6 +555,9 @@ function DesignPage() {
               <li>For motion effects: mention movement like "moving", "chasing", "pulsing", "twinkling"</li>
               <li>Reference walls (West, North, East, South) for specific placement</li>
               <li>Describe moods: "warm", "cool", "festive", "calm", "energetic"</li>
+              {aiBaseDesignId && (
+                <li><strong>Modifying:</strong> Describe what to change, keep, or enhance</li>
+              )}
             </ul>
           </div>
         </div>

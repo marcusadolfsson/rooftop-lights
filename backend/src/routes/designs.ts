@@ -136,7 +136,7 @@ router.delete('/:id', (req: Request, res: Response) => {
 
 // Generate design using AI
 router.post('/ai/generate', async (req: Request, res: Response) => {
-  const { description } = req.body;
+  const { description, baseDesignId, mode } = req.body;
 
   if (!description || typeof description !== 'string') {
     res.status(400).json({ error: 'Description is required' });
@@ -145,6 +145,12 @@ router.post('/ai/generate', async (req: Request, res: Response) => {
 
   if (description.length > 1000) {
     res.status(400).json({ error: 'Description too long (max 1000 characters)' });
+    return;
+  }
+
+  // Validate mode if provided
+  if (mode && !['create', 'modify', 'derivative'].includes(mode)) {
+    res.status(400).json({ error: 'Invalid mode. Must be: create, modify, or derivative' });
     return;
   }
 
@@ -158,7 +164,11 @@ router.post('/ai/generate', async (req: Request, res: Response) => {
   }
 
   try {
-    const result = await generateDesignFromDescription(description);
+    const result = await generateDesignFromDescription({
+      description,
+      baseDesignId,
+      mode: mode || 'create'
+    });
 
     if (result.success) {
       res.json({

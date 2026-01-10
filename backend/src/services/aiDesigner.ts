@@ -26,6 +26,14 @@ interface MotionDesign {
 
 type GeneratedDesign = StaticDesign | MotionDesign;
 
+interface StoredDesign {
+  id: string;
+  name: string;
+  type: 'static' | 'motion';
+  data: string;
+  created_at: string;
+}
+
 // Get the light layout context for the AI
 function getLightLayoutContext(): string {
   const db = getDatabase();
@@ -96,25 +104,108 @@ AVAILABLE MOTION EFFECTS:
 `;
 }
 
-export async function generateDesignFromDescription(description: string): Promise<{
+// Get existing designs for context
+function getExistingDesignsContext(): string {
+  const db = getDatabase();
+  const designs = db.prepare('SELECT id, name, type, data FROM designs ORDER BY name').all() as StoredDesign[];
+
+  if (designs.length === 0) {
+    return '\nEXISTING DESIGNS: None yet.\n';
+  }
+
+  const designSummaries = designs.map(d => {
+    const data = JSON.parse(d.data);
+    if (d.type === 'static') {
+      // Summarize static design - show a sample of colors
+      const colors = data.colors as Record<number, RGBWColor> | RGBWColor[];
+      const colorArray = Array.isArray(colors) ? colors : Object.values(colors);
+      const sample = colorArray.slice(0, 3).map((c: RGBWColor) =>
+        `rgba(${c.r},${c.g},${c.b},${c.w})`
+      ).join(', ');
+      return `  - "${d.name}" (id: ${d.id}) [static] - Sample colors: ${sample}...`;
+    } else {
+      // Summarize motion design
+      const effect = data.effect || data.type;
+      return `  - "${d.name}" (id: ${d.id}) [motion: ${effect}]`;
+    }
+  });
+
+  return `
+EXISTING DESIGNS (you can reference these by name or ID when user wants modifications):
+${designSummaries.join('\n')}
+`;
+}
+
+// Get a specific design's full data
+function getDesignById(designId: string): { design: StoredDesign; data: unknown } | null {
+  const db = getDatabase();
+  const design = db.prepare('SELECT * FROM designs WHERE id = ?').get(designId) as StoredDesign | undefined;
+
+  if (!design) return null;
+
+  return {
+    design,
+    data: JSON.parse(design.data)
+  };
+}
+
+export interface GenerateOptions {
+  description: string;
+  baseDesignId?: string;  // Optional: design to use as a starting point/reference
+  mode?: 'create' | 'modify' | 'derivative';  // How to handle the base design
+}
+
+export async function generateDesignFromDescription(
+  descriptionOrOptions: string | GenerateOptions
+): Promise<{
   success: boolean;
   design?: GeneratedDesign;
   designId?: string;
   error?: string;
 }> {
+  // Handle both old string API and new options API
+  const options: GenerateOptions = typeof descriptionOrOptions === 'string'
+    ? { description: descriptionOrOptions }
+    : descriptionOrOptions;
+
+  const { description, baseDesignId, mode = 'create' } = options;
+
   const layoutContext = getLightLayoutContext();
+  const existingDesignsContext = getExistingDesignsContext();
+
+  // If modifying an existing design, get its full data
+  let baseDesignContext = '';
+  if (baseDesignId) {
+    const baseDesign = getDesignById(baseDesignId);
+    if (baseDesign) {
+      baseDesignContext = `
+BASE DESIGN TO ${mode.toUpperCase()}:
+Name: "${baseDesign.design.name}"
+Type: ${baseDesign.design.type}
+Full Data: ${JSON.stringify(baseDesign.data, null, 2)}
+
+The user wants to ${mode === 'modify' ? 'modify this design' : 'create a derivative based on this design'}.
+Use this as your starting point and apply the requested changes.
+`;
+    }
+  }
 
   const systemPrompt = `You are an expert lighting designer for architectural RGBW LED installations.
 You create beautiful, artistic light designs based on user descriptions.
 
 ${layoutContext}
 
+${existingDesignsContext}
+
+${baseDesignContext}
+
 INSTRUCTIONS:
 1. Analyze the user's description to understand what kind of light show they want
-2. Decide if this should be a STATIC design (fixed colors) or MOTION design (animated effect)
-3. Generate the appropriate JSON response
+2. If referencing an existing design, use it as context for modifications or inspiration
+3. Decide if this should be a STATIC design (fixed colors) or MOTION design (animated effect)
+4. Generate the appropriate JSON response
 
-For STATIC designs, create an array of ${96} RGBW color objects, one for each light (indexed by light_id 1-96).
+For STATIC designs, create an array of 96 RGBW color objects, one for each light (indexed by light_id 1-96).
 Think about:
 - Gradients across walls
 - Color zones (different colors for different walls or sections)
@@ -144,16 +235,21 @@ For motion:
   "params": { ... effect parameters ... }
 }
 
-Be creative and artistic! Match the mood, theme, and energy of the user's description.`;
+Be creative and artistic! Match the mood, theme, and energy of the user's description.
+${baseDesignId ? `Remember: You are ${mode === 'modify' ? 'modifying' : 'creating a derivative of'} an existing design. Keep what works and change what the user requests.` : ''}`;
 
   try {
+    const userMessage = baseDesignId
+      ? `${mode === 'modify' ? 'Modify' : 'Create a variation of'} the design "${baseDesignId}": ${description}`
+      : `Create a light design for: "${description}"`;
+
     const response = await anthropic.messages.create({
       model: 'claude-sonnet-4-20250514',
       max_tokens: 8192,
       messages: [
         {
           role: 'user',
-          content: `Create a light design for: "${description}"`
+          content: userMessage
         }
       ],
       system: systemPrompt
@@ -241,4 +337,14 @@ Be creative and artistic! Match the mood, theme, and energy of the user's descri
       error: error instanceof Error ? error.message : 'Unknown error occurred'
     };
   }
+}
+
+// Get list of existing designs for frontend display
+export function getDesignsForAI(): Array<{ id: string; name: string; type: string }> {
+  const db = getDatabase();
+  return db.prepare('SELECT id, name, type FROM designs ORDER BY name').all() as Array<{
+    id: string;
+    name: string;
+    type: string;
+  }>;
 }

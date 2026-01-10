@@ -207,7 +207,11 @@ export const artnetAPI = {
 export const aiAPI = {
   getStatus: () => fetchJSON<{ enabled: boolean }>('/designs/ai/status'),
 
-  generate: (description: string) =>
+  generate: (options: {
+    description: string;
+    baseDesignId?: string;
+    mode?: 'create' | 'modify' | 'derivative';
+  }) =>
     fetchJSON<{
       success: boolean;
       design?: {
@@ -221,7 +225,7 @@ export const aiAPI = {
       error?: string;
     }>('/designs/ai/generate', {
       method: 'POST',
-      body: JSON.stringify({ description }),
+      body: JSON.stringify(options),
     }),
 };
 
