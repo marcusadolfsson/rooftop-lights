@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { getDatabase } from '../models/database.js';
 import { v4 as uuidv4 } from 'uuid';
+import { generateDesignFromDescription } from '../services/aiDesigner.js';
 
 const router = Router();
 
@@ -131,6 +132,60 @@ router.delete('/:id', (req: Request, res: Response) => {
   db.prepare('DELETE FROM designs WHERE id = ?').run(id);
 
   res.json({ success: true });
+});
+
+// Generate design using AI
+router.post('/ai/generate', async (req: Request, res: Response) => {
+  const { description } = req.body;
+
+  if (!description || typeof description !== 'string') {
+    res.status(400).json({ error: 'Description is required' });
+    return;
+  }
+
+  if (description.length > 1000) {
+    res.status(400).json({ error: 'Description too long (max 1000 characters)' });
+    return;
+  }
+
+  // Check if API key is configured
+  if (!process.env.ANTHROPIC_API_KEY) {
+    res.status(503).json({
+      error: 'AI features not available. ANTHROPIC_API_KEY not configured.',
+      aiEnabled: false
+    });
+    return;
+  }
+
+  try {
+    const result = await generateDesignFromDescription(description);
+
+    if (result.success) {
+      res.json({
+        success: true,
+        design: result.design,
+        designId: result.designId,
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        error: result.error,
+      });
+    }
+  } catch (error) {
+    console.error('AI generation error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to generate design',
+    });
+  }
+});
+
+// Check if AI features are available
+router.get('/ai/status', (req: Request, res: Response) => {
+  res.json({
+    enabled: !!process.env.ANTHROPIC_API_KEY,
+  });
 });
 
 // Get available motion effect types

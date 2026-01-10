@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { HexColorPicker } from 'react-colorful';
-import { layoutAPI, designsAPI, playlistsAPI, previewAPI } from '../utils/api';
+import { layoutAPI, designsAPI, playlistsAPI, previewAPI, aiAPI } from '../utils/api';
 import { useWebSocket } from '../hooks/useWebSocket';
 import type {
   Design,
@@ -49,6 +49,13 @@ function DesignPage() {
   const [showSaveModal, setShowSaveModal] = useState(false);
   const [saveAsName, setSaveAsName] = useState('');
 
+  // AI Designer state
+  const [aiEnabled, setAiEnabled] = useState(false);
+  const [aiDescription, setAiDescription] = useState('');
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [showAiPanel, setShowAiPanel] = useState(false);
+
   useEffect(() => {
     loadData();
   }, []);
@@ -56,16 +63,18 @@ function DesignPage() {
   const loadData = async () => {
     try {
       setLoading(true);
-      const [layoutData, designsData, effectsData, playlistsData] = await Promise.all([
+      const [layoutData, designsData, effectsData, playlistsData, aiStatus] = await Promise.all([
         layoutAPI.getLayout(),
         designsAPI.getAll(),
         designsAPI.getEffectTypes(),
         playlistsAPI.getAll(),
+        aiAPI.getStatus().catch(() => ({ enabled: false })),
       ]);
       setLayout(layoutData);
       setDesigns(designsData);
       setEffectTypes(effectsData);
       setPlaylists(playlistsData);
+      setAiEnabled(aiStatus.enabled);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load data');
     } finally {
@@ -333,6 +342,53 @@ function DesignPage() {
     }
   };
 
+  // AI generation function
+  const generateAIDesign = async () => {
+    if (!aiDescription.trim()) return;
+
+    setAiLoading(true);
+    setAiError(null);
+
+    try {
+      const result = await aiAPI.generate(aiDescription);
+
+      if (result.success && result.design) {
+        // Reload designs to get the new one
+        await loadData();
+
+        // Find and select the new design
+        const newDesign = designs.find((d) => d.id === result.designId);
+        if (newDesign) {
+          loadDesign(newDesign);
+        }
+
+        // Switch to appropriate tab
+        if (result.design.type === 'static') {
+          setActiveTab('static');
+          // Load colors for static design
+          if (result.design.colors) {
+            const colorMap: Record<number, RGBW> = {};
+            result.design.colors.forEach((color, idx) => {
+              colorMap[idx + 1] = color;
+            });
+            setCurrentColors(colorMap);
+          }
+        } else {
+          setActiveTab('motion');
+        }
+
+        setAiDescription('');
+        setShowAiPanel(false);
+      } else {
+        setAiError(result.error || 'Failed to generate design');
+      }
+    } catch (err) {
+      setAiError(err instanceof Error ? err.message : 'Failed to generate design');
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
   // Helper functions
   const rgbwToHex = (color: RGBW): string => {
     const r = Math.round(color.r);
@@ -375,14 +431,78 @@ function DesignPage() {
     <div>
       <div className="page-header">
         <h1 className="page-title">Design</h1>
-        <div className="live-preview-toggle">
-          <span>Live Preview</span>
-          <div
-            className={`toggle-switch ${isLivePreview ? 'active' : ''}`}
-            onClick={toggleLivePreview}
-          />
+        <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+          {aiEnabled && (
+            <button
+              className={`btn ${showAiPanel ? 'btn-primary' : 'btn-secondary'}`}
+              onClick={() => setShowAiPanel(!showAiPanel)}
+            >
+              AI Designer
+            </button>
+          )}
+          <div className="live-preview-toggle">
+            <span>Live Preview</span>
+            <div
+              className={`toggle-switch ${isLivePreview ? 'active' : ''}`}
+              onClick={toggleLivePreview}
+            />
+          </div>
         </div>
       </div>
+
+      {/* AI Designer Panel */}
+      {showAiPanel && aiEnabled && (
+        <div className="card" style={{ marginBottom: '1rem', borderLeft: '4px solid var(--primary)' }}>
+          <div className="card-header">
+            <h3 className="card-title">AI Design Generator</h3>
+            <button className="btn btn-sm btn-secondary" onClick={() => setShowAiPanel(false)}>
+              Close
+            </button>
+          </div>
+          <p style={{ marginBottom: '1rem', color: 'var(--text-secondary)' }}>
+            Describe the light show you want and AI will generate it for you.
+          </p>
+          <div className="form-group">
+            <textarea
+              className="form-input"
+              rows={3}
+              value={aiDescription}
+              onChange={(e) => setAiDescription(e.target.value)}
+              placeholder="e.g., 'A warm sunset gradient fading from orange on the west wall to purple on the east' or 'Christmas lights with red and green candy cane stripes moving slowly'"
+              disabled={aiLoading}
+              style={{ resize: 'vertical' }}
+            />
+          </div>
+          {aiError && (
+            <div style={{ color: 'var(--error)', marginBottom: '1rem' }}>
+              {aiError}
+            </div>
+          )}
+          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+            <button
+              className="btn btn-primary"
+              onClick={generateAIDesign}
+              disabled={aiLoading || !aiDescription.trim()}
+            >
+              {aiLoading ? 'Generating...' : 'Generate Design'}
+            </button>
+            {aiLoading && (
+              <span style={{ color: 'var(--text-secondary)' }}>
+                This may take a few seconds...
+              </span>
+            )}
+          </div>
+          <div style={{ marginTop: '1rem', fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
+            <strong>Tips:</strong>
+            <ul style={{ marginTop: '0.5rem', marginLeft: '1.5rem' }}>
+              <li>For static designs: describe colors, gradients, patterns, or zones</li>
+              <li>For motion effects: mention movement like "moving", "chasing", "pulsing", "twinkling"</li>
+              <li>Reference walls (West, North, East, South) for specific placement</li>
+              <li>Describe moods: "warm", "cool", "festive", "calm", "energetic"</li>
+            </ul>
+          </div>
+        </div>
+      )}
 
       {error && (
         <div className="card" style={{ backgroundColor: 'var(--error)', marginBottom: '1rem' }}>

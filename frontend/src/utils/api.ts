@@ -203,6 +203,28 @@ export const artnetAPI = {
     }),
 };
 
+// AI Designer API
+export const aiAPI = {
+  getStatus: () => fetchJSON<{ enabled: boolean }>('/designs/ai/status'),
+
+  generate: (description: string) =>
+    fetchJSON<{
+      success: boolean;
+      design?: {
+        type: 'static' | 'motion';
+        name: string;
+        colors?: { r: number; g: number; b: number; w: number }[];
+        effect?: string;
+        params?: Record<string, unknown>;
+      };
+      designId?: string;
+      error?: string;
+    }>('/designs/ai/generate', {
+      method: 'POST',
+      body: JSON.stringify({ description }),
+    }),
+};
+
 // Preview API
 export const previewAPI = {
   getStatus: () => fetchJSON<{ isLivePreview: boolean }>('/preview/status'),
