@@ -1,17 +1,21 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
+// Backend port: use VITE_API_PORT env var or default to 3030
+const apiPort = process.env.VITE_API_PORT || '3030';
+
 export default defineConfig({
   plugins: [react()],
   server: {
     port: 5173,
+    allowedHosts: ['rooftop.onestpete.com'],
     proxy: {
       '/api': {
-        target: 'http://localhost:3030',
+        target: `http://localhost:${apiPort}`,
         changeOrigin: true,
       },
       '/ws': {
-        target: 'ws://localhost:3030',
+        target: `ws://localhost:${apiPort}`,
         ws: true,
       },
     },

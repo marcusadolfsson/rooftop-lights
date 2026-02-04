@@ -1,0 +1,29 @@
+FROM node:20-alpine
+
+WORKDIR /app
+
+# Copy package files for both backend and frontend
+COPY backend/package*.json ./backend/
+COPY frontend/package*.json ./frontend/
+
+# Install dependencies (including concurrently in backend for convenience)
+RUN cd backend && npm install
+RUN cd frontend && npm install
+RUN npm install -g concurrently
+
+# Copy source (will be overridden by volume mounts)
+COPY backend/ ./backend/
+COPY frontend/ ./frontend/
+
+# Expose ports: 3030 (web), 6454 (ArtNet)
+EXPOSE 3030
+EXPOSE 6454/udp
+
+# Run both backend and frontend with hot reload
+# Backend on port 3031 (internal), Frontend/Vite on port 3030 (public)
+ENV PORT=3031
+ENV VITE_API_PORT=3031
+
+CMD concurrently --kill-others \
+    "cd /app/backend && npm run dev" \
+    "cd /app/frontend && npm run dev -- --host --port 3030"
