@@ -1,6 +1,19 @@
 import { getDatabase } from '../models/database.js';
 import { getArtNetController, ArtNetController } from '../artnet/artnet.js';
-import { getEffectEngine, MotionEffect, StaticDesign, RGBW } from '../services/effectEngine.js';
+import { getEffectEngine, MotionEffect, StaticDesign, RGBW, Light } from '../services/effectEngine.js';
+
+function maskDefectiveChannels(light: Light, color: RGBW): RGBW {
+  if (!light.defective_channels) return color;
+  const channels = light.defective_channels.split(',');
+  const masked = { ...color };
+  for (const ch of channels) {
+    if (ch === 'r') masked.r = 0;
+    else if (ch === 'g') masked.g = 0;
+    else if (ch === 'b') masked.b = 0;
+    else if (ch === 'w') masked.w = 0;
+  }
+  return masked;
+}
 
 interface Design {
   id: string;
@@ -31,12 +44,15 @@ interface Schedule {
   is_default: number;
   start_date: string | null;
   end_date: string | null;
+  start_time: string | null;
+  end_time: string | null;
   priority: number;
 }
 
 export class Scheduler {
   private isRunning: boolean = false;
   private isLivePreview: boolean = false;
+  private previewDesign: { type: string; data: unknown } | null = null;
   private livePreviewDesign: { type: string; data: unknown } | null = null;
   private currentFrame: number = 0;
   private frameInterval: NodeJS.Timeout | null = null;
@@ -72,58 +88,112 @@ export class Scheduler {
     this.wsClients.delete(ws);
   }
 
+  // Set a preview design for WebSocket broadcast only (no ArtNet)
+  setPreviewDesign(design: { type: string; data: unknown } | null): void {
+    this.previewDesign = design;
+    this.currentFrame = 0;
+  }
+
+  // Enable/disable live ArtNet output of the preview design
   setLivePreview(enabled: boolean, design?: { type: string; data: unknown }): void {
     this.isLivePreview = enabled;
-    this.livePreviewDesign = enabled && design ? design : null;
+    if (design) {
+      this.previewDesign = design;
+      this.livePreviewDesign = design;
+    }
+    if (!enabled) {
+      this.livePreviewDesign = null;
+    }
     this.currentFrame = 0;
+  }
+
+  // Clear all preview state
+  clearPreview(): void {
+    this.isLivePreview = false;
+    this.previewDesign = null;
+    this.livePreviewDesign = null;
+    this.currentFrame = 0;
+  }
+
+  // Clear only the WS-only preview (leaves live preview untouched)
+  clearSoftPreview(): void {
+    if (this.isLivePreview) {
+      // Don't clear — let the live preview continue showing on WS via artnetFrame
+      this.previewDesign = this.livePreviewDesign;
+    } else {
+      this.previewDesign = null;
+    }
   }
 
   isInLivePreview(): boolean {
     return this.isLivePreview;
   }
 
+  hasPreviewDesign(): boolean {
+    return this.previewDesign !== null;
+  }
+
+  getLivePreviewInfo(): { type: string; effectType?: string } | null {
+    if (!this.isLivePreview || !this.livePreviewDesign) return null;
+    const info: { type: string; effectType?: string } = {
+      type: this.livePreviewDesign.type,
+    };
+    if (this.livePreviewDesign.type === 'motion') {
+      const data = this.livePreviewDesign.data as { type?: string };
+      info.effectType = data.type;
+    }
+    return info;
+  }
+
   private tick(): void {
     const artnet = getArtNetController();
     if (!artnet) return;
 
-    let frameData: Map<number, RGBW>;
+    let artnetFrame: Map<number, RGBW>;
+    let wsFrame: Map<number, RGBW>;
 
+    // Determine what to show on ArtNet
     if (this.isLivePreview && this.livePreviewDesign) {
-      // Live preview mode
-      frameData = this.renderDesign(this.livePreviewDesign.type, this.livePreviewDesign.data);
+      artnetFrame = this.renderDesign(this.livePreviewDesign.type, this.livePreviewDesign.data);
     } else {
-      // Normal scheduler mode
       const activeSchedule = this.getActiveSchedule();
-      if (activeSchedule) {
-        frameData = this.renderSchedule(activeSchedule);
-      } else {
-        // No active schedule, blackout
-        frameData = new Map();
-      }
+      artnetFrame = activeSchedule ? this.renderSchedule(activeSchedule) : new Map();
     }
 
-    // Apply frame to ArtNet
-    this.applyFrame(artnet, frameData);
+    // Determine what to broadcast to WebSocket (preview design takes priority)
+    if (this.previewDesign) {
+      // If live preview, reuse the already-rendered frame; otherwise render separately
+      if (this.isLivePreview && this.livePreviewDesign === this.previewDesign) {
+        wsFrame = artnetFrame;
+      } else {
+        wsFrame = this.renderDesign(this.previewDesign.type, this.previewDesign.data);
+      }
+    } else {
+      wsFrame = artnetFrame;
+    }
 
-    // Broadcast to WebSocket clients for preview
-    this.broadcastFrame(frameData);
+    this.applyFrame(artnet, artnetFrame);
+    this.broadcastFrame(wsFrame);
 
     this.currentFrame++;
   }
 
   private getActiveSchedule(): Schedule | null {
     const db = getDatabase();
-    const now = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+    const now = new Date();
+    const localDate = now.toLocaleDateString('en-CA'); // YYYY-MM-DD
+    const localTime = now.toTimeString().slice(0, 5); // HH:MM
+    const localDateTime = `${localDate} ${localTime}`;
 
-    // First check for date-specific schedules
+    // First check for date-specific schedules using full datetime comparison
     const dateSchedule = db.prepare(`
       SELECT * FROM schedules
       WHERE is_default = 0
-        AND start_date <= ?
-        AND end_date >= ?
+        AND datetime(start_date || ' ' || COALESCE(start_time, '16:00')) <= datetime(?)
+        AND datetime(end_date || ' ' || COALESCE(end_time, '16:00')) >= datetime(?)
       ORDER BY priority DESC
       LIMIT 1
-    `).get(now, now) as Schedule | undefined;
+    `).get(localDateTime, localDateTime) as Schedule | undefined;
 
     if (dateSchedule) {
       return dateSchedule;
@@ -221,7 +291,8 @@ export class Scheduler {
       return engine.generateStaticFrame({ colors });
     } else if (type === 'motion') {
       const motionData = data as MotionEffect;
-      return engine.generateMotionFrame(motionData, this.currentFrame);
+      const scaledFrame = Math.floor(this.currentFrame * (motionData.speed || 1));
+      return engine.generateMotionFrame(motionData, scaledFrame);
     }
 
     return new Map();
@@ -232,11 +303,16 @@ export class Scheduler {
     const lights = engine.getLights();
 
     for (const light of lights) {
-      const color = frameData.get(light.light_id) || { r: 0, g: 0, b: 0, w: 0 };
+      const rawColor = frameData.get(light.light_id) || { r: 0, g: 0, b: 0, w: 0 };
+      const color = maskDefectiveChannels(light, rawColor);
       if (light.light_type === 'RGBW') {
         artnet.setRGBW(light.dmx_start_channel, color.r, color.g, color.b, color.w);
       } else {
-        artnet.setRGB(light.dmx_start_channel, color.r, color.g, color.b);
+        // Fold W back into RGB for RGB-only lights
+        const r = Math.min(255, color.r + color.w);
+        const g = Math.min(255, color.g + color.w);
+        const b = Math.min(255, color.b + color.w);
+        artnet.setRGB(light.dmx_start_channel, r, g, b);
       }
     }
   }
@@ -247,10 +323,19 @@ export class Scheduler {
     // Only send every 3rd frame to reduce bandwidth
     if (this.currentFrame % 3 !== 0) return;
 
+    const engine = getEffectEngine();
+    const lights = engine.getLights();
+    const lightMap = new Map<number, Light>();
+    for (const light of lights) {
+      lightMap.set(light.light_id, light);
+    }
+
+    // Send raw (unmasked) frame data for ALL lights — default to black for any not set by the effect
+    const black: RGBW = { r: 0, g: 0, b: 0, w: 0 };
     const frameObj: Record<number, RGBW> = {};
-    frameData.forEach((color, lightId) => {
-      frameObj[lightId] = color;
-    });
+    for (const light of lights) {
+      frameObj[light.light_id] = frameData.get(light.light_id) || black;
+    }
 
     const message = JSON.stringify({
       type: 'frame',

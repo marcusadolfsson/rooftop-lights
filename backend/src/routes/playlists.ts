@@ -68,12 +68,12 @@ router.post('/', (req: Request, res: Response) => {
 
   // Insert items
   const insertItem = db.prepare(`
-    INSERT INTO playlist_items (id, playlist_id, design_id, duration, position)
-    VALUES (?, ?, ?, ?, ?)
+    INSERT INTO playlist_items (id, playlist_id, design_id, duration, position, transition)
+    VALUES (?, ?, ?, ?, ?, ?)
   `);
 
   items.forEach((item: any, index: number) => {
-    insertItem.run(uuidv4(), id, item.design_id, item.duration, index);
+    insertItem.run(uuidv4(), id, item.design_id, item.duration, index, item.transition || 'cut');
   });
 
   res.json({ id, name, play_mode, items });
@@ -97,12 +97,12 @@ router.put('/:id', (req: Request, res: Response) => {
 
     // Insert new items
     const insertItem = db.prepare(`
-      INSERT INTO playlist_items (id, playlist_id, design_id, duration, position)
-      VALUES (?, ?, ?, ?, ?)
+      INSERT INTO playlist_items (id, playlist_id, design_id, duration, position, transition)
+      VALUES (?, ?, ?, ?, ?, ?)
     `);
 
     items.forEach((item: any, index: number) => {
-      insertItem.run(uuidv4(), id, item.design_id, item.duration, index);
+      insertItem.run(uuidv4(), id, item.design_id, item.duration, index, item.transition || 'cut');
     });
   }
 
@@ -136,7 +136,7 @@ router.delete('/:id', (req: Request, res: Response) => {
 router.post('/:id/items', (req: Request, res: Response) => {
   const db = getDatabase();
   const { id } = req.params;
-  const { design_id, duration, position } = req.body;
+  const { design_id, duration, position, transition } = req.body;
   const itemId = uuidv4();
 
   // Get max position if not provided
@@ -149,13 +149,13 @@ router.post('/:id/items', (req: Request, res: Response) => {
   }
 
   db.prepare(`
-    INSERT INTO playlist_items (id, playlist_id, design_id, duration, position)
-    VALUES (?, ?, ?, ?, ?)
-  `).run(itemId, id, design_id, duration, pos);
+    INSERT INTO playlist_items (id, playlist_id, design_id, duration, position, transition)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(itemId, id, design_id, duration, pos, transition || 'cut');
 
   db.prepare(`UPDATE playlists SET updated_at = datetime('now') WHERE id = ?`).run(id);
 
-  res.json({ id: itemId, playlist_id: id, design_id, duration, position: pos });
+  res.json({ id: itemId, playlist_id: id, design_id, duration, position: pos, transition: transition || 'cut' });
 });
 
 // Update playlist item

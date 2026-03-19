@@ -1,6 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { getDatabase } from '../models/database.js';
-import { v4 as uuidv4 } from 'uuid';
 
 const anthropic = new Anthropic();
 
@@ -21,7 +20,10 @@ interface MotionDesign {
   type: 'motion';
   name: string;
   effect: string;
-  params: Record<string, unknown>;
+  colors: RGBWColor[];
+  speed: number;
+  scope: 'all' | 'wall' | 'group';
+  params?: Record<string, unknown>;
 }
 
 type GeneratedDesign = StaticDesign | MotionDesign;
@@ -35,72 +37,113 @@ interface StoredDesign {
 }
 
 // Get the light layout context for the AI
-function getLightLayoutContext(): string {
-  const db = getDatabase();
-  const walls = db.prepare('SELECT * FROM walls ORDER BY position').all() as Array<{
-    id: string;
-    name: string;
-    width: number;
-    height: number;
-    position: number;
-  }>;
+interface WallInfo {
+  id: string;
+  name: string;
+  width: number;
+  height: number;
+  position: number;
+}
 
+interface LightInfo {
+  light_id: number;
+  wall_id: string;
+  wall_name: string;
+  matrix_x: number;
+  matrix_y: number;
+  defective_channels: string;
+}
+
+// Get walls and lights from DB (cached per call)
+function getLayoutData(): { walls: WallInfo[]; lights: LightInfo[] } {
+  const db = getDatabase();
+  const walls = db.prepare('SELECT * FROM walls ORDER BY position').all() as WallInfo[];
   const lights = db.prepare(`
-    SELECT l.*, w.name as wall_name, w.position as wall_position
+    SELECT l.*, w.name as wall_name
     FROM lights l
     JOIN walls w ON l.wall_id = w.id
     ORDER BY w.position, l.matrix_y DESC, l.matrix_x
-  `).all() as Array<{
-    light_id: number;
-    wall_name: string;
-    matrix_x: number;
-    matrix_y: number;
-  }>;
+  `).all() as LightInfo[];
+  return { walls, lights };
+}
+
+// Convert wall-grid format from AI to light_id color map
+function wallGridToColorMap(
+  wallGrids: Record<string, RGBWColor[][]>,
+  walls: WallInfo[],
+  lights: LightInfo[]
+): Record<number, RGBWColor> {
+  const colorMap: Record<number, RGBWColor> = {};
+  const black: RGBWColor = { r: 0, g: 0, b: 0, w: 0 };
+
+  for (const light of lights) {
+    const grid = wallGrids[light.wall_name];
+    if (grid && grid[light.matrix_y] && grid[light.matrix_y][light.matrix_x]) {
+      colorMap[light.light_id] = grid[light.matrix_y][light.matrix_x];
+    } else {
+      colorMap[light.light_id] = black;
+    }
+  }
+  return colorMap;
+}
+
+function getLightLayoutContext(): string {
+  const { walls, lights } = getLayoutData();
 
   const totalLights = lights.length;
-  const lightIds = lights.map(l => l.light_id).sort((a, b) => a - b);
+
+  const wallDescriptions = walls.map(w =>
+    `  - ${w.name}: ${w.width} columns x ${w.height} rows (${w.width * w.height} lights)`
+  ).join('\n');
 
   return `
-LIGHT LAYOUT CONTEXT:
-- Total lights: ${totalLights} RGBW LED fixtures
-- Walls (connected in a continuous perimeter, viewed from outside):
-${walls.map(w => `  - ${w.name}: ${w.width}x${w.height} matrix (${w.width * w.height} lights)`).join('\n')}
+LIGHT LAYOUT:
+- ${totalLights} RGBW LED fixtures on a building roofline
+- Each light: RGBW channels, values 0-255
+- 4 walls forming a rectangle (viewed from outside):
+${wallDescriptions}
+- Rows: y=0 is bottom, y=2 is top
+- Columns: x=0 is left (viewed from outside)
+- West and East are the long walls (13 wide), North and South are short (3 wide)
 
-- Light IDs range from ${Math.min(...lightIds)} to ${Math.max(...lightIds)}
-- Each light has RGBW channels (Red, Green, Blue, White) with values 0-255
-- The walls connect: West → North → East → South → West (forming a rectangle)
-- Top row (y=2), Middle row (y=1), Bottom row (y=0)
+MOTION DESIGN FORMAT:
+All motion designs use effect: "ai" with custom JavaScript animation code.
+You write the animation logic — you can create ANYTHING: comets, waves, games, physics, text, patterns, etc.
 
-AVAILABLE MOTION EFFECTS:
-1. "candyCane" - Alternating color stripes that move along the perimeter
-   params: { color1: RGBWColor, color2: RGBWColor, stripeWidth: number (1-10), speed: number (0.1-5), direction: 1 or -1 }
+Structure:
+- "effect": always "ai"
+- "colors": array of RGBW color objects the user can edit after generation
+- "speed": number (0.1-5) controlling animation speed (applied before your code runs)
+- "params": { "code": "...javascript function body..." }
 
-2. "checkerboard" - Animated checkerboard pattern
-   params: { color1: RGBWColor, color2: RGBWColor, speed: number (0.1-5) }
+The code is the BODY of a function receiving a single argument \`ctx\`. It must RETURN an object mapping light IDs (numbers) to {r,g,b,w} color objects (values 0-255).
 
-3. "comet" - Moving comet with tail effect
-   params: { color: RGBWColor, tailLength: number (3-20), speed: number (0.1-5), direction: 1 or -1 }
+CONTEXT OBJECT (ctx):
+- ctx.frame: number — current frame counter (~30fps, already speed-adjusted)
+- ctx.colors: array of {r,g,b,w} — the editable color palette from "colors" field
+- ctx.lights: array of light objects, each with:
+    .id — light ID (use as key in return object)
+    .x — column within its wall (0-based)
+    .y — row (0 = bottom, 1 = middle, 2 = top)
+    .wallIndex — which wall (0-3)
+    .cx — continuous x across all walls (0 to width-1)
+- ctx.walls: array of {name, width, height} — wall info
+- ctx.width: total columns across all walls (e.g. 32)
+- ctx.height: max rows (e.g. 3)
 
-4. "sparkle" - Random twinkling lights
-   params: { baseColor: RGBWColor, sparkleColor: RGBWColor, density: number (0.01-0.3), speed: number (0.1-5) }
+RULES:
+1. RETURN an object: { [lightId]: {r, g, b, w} }. Lights not in the object stay off (black).
+2. Reference ctx.colors[0], ctx.colors[1] etc so the user can edit colors after generation.
+3. Use ctx.frame for all animation timing. Do NOT use Date.now() or Math.random() (use deterministic pseudo-random based on frame + light id instead).
+4. Available: Math.sin, Math.cos, Math.floor, Math.ceil, Math.round, Math.abs, Math.min, Math.max, Math.PI, Math.sqrt, Math.pow, parseInt, parseFloat.
+5. No imports, fetch, setTimeout, setInterval, or async. Pure computation only.
+6. Keep code concise. Use \\n for newlines in the JSON string.
 
-5. "wave" - Sine wave color animation
-   params: { color1: RGBWColor, color2: RGBWColor, wavelength: number (5-30), speed: number (0.1-5) }
+EXAMPLE — Red background with bouncing white comet:
+"code": "var out = {};\\nvar base = ctx.colors[0] || {r:255,g:0,b:0,w:0};\\nvar head = ctx.colors[1] || {r:0,g:0,b:0,w:255};\\nvar len = ctx.width;\\nvar step = Math.floor(ctx.frame / 4);\\nvar cycle = len * 2;\\nvar raw = step % cycle;\\nvar pos = raw >= len ? cycle - raw - 1 : raw;\\nfor (var i = 0; i < ctx.lights.length; i++) {\\n  var L = ctx.lights[i];\\n  var dist = Math.abs(L.cx - pos);\\n  if (dist < 6) {\\n    var b = 1 - dist / 6;\\n    out[L.id] = {r: Math.round(head.r*b), g: Math.round(head.g*b), b: Math.round(head.b*b), w: Math.round(head.w*b)};\\n  } else {\\n    out[L.id] = base;\\n  }\\n}\\nreturn out;"
 
-6. "rainbow" - Smooth rainbow cycle
-   params: { saturation: number (0-1), brightness: number (0-1), speed: number (0.1-5) }
-
-7. "chase" - Single light or group chasing around
-   params: { color: RGBWColor, backgroundColor: RGBWColor, groupSize: number (1-10), speed: number (0.1-5), direction: 1 or -1 }
-
-8. "breathe" - Smooth fade in/out
-   params: { color: RGBWColor, minBrightness: number (0-0.5), speed: number (0.1-2) }
-
-9. "fire" - Flickering fire effect
-   params: { intensity: number (0.5-1), speed: number (0.1-3) }
-
-10. "twinkle" - Holiday twinkle effect
-    params: { baseColor: RGBWColor, twinkleColor: RGBWColor, density: number (0.05-0.4), speed: number (0.5-3) }
+EXAMPLE — Snake game (green snake on black):
+"code": "var out = {};\\nvar snakeColor = ctx.colors[0] || {r:0,g:255,b:0,w:0};\\nvar foodColor = ctx.colors[1] || {r:255,g:0,b:0,w:0};\\nvar len = ctx.width;\\nvar snakeLen = 6;\\nvar step = Math.floor(ctx.frame / 5);\\nvar pos = step % (len * 2);\\nvar headX = pos < len ? pos : len * 2 - pos - 1;\\nvar headY = pos < len ? 0 : (Math.floor(step / (len*2)) % 3);\\nvar foodX = (step * 7 + 13) % len;\\nvar foodY = (step * 3 + 7) % 3;\\nfor (var i = 0; i < ctx.lights.length; i++) {\\n  var L = ctx.lights[i];\\n  var trail = headX - L.cx;\\n  if (pos >= len) trail = L.cx - headX;\\n  if (L.y === headY && trail >= 0 && trail < snakeLen) {\\n    var bright = 1 - trail / snakeLen * 0.6;\\n    out[L.id] = {r: Math.round(snakeColor.r*bright), g: Math.round(snakeColor.g*bright), b: Math.round(snakeColor.b*bright), w: 0};\\n  } else if (L.cx === foodX && L.y === foodY) {\\n    out[L.id] = foodColor;\\n  }\\n}\\nreturn out;"
 `;
 }
 
@@ -153,6 +196,14 @@ export interface GenerateOptions {
   description: string;
   baseDesignId?: string;  // Optional: design to use as a starting point/reference
   mode?: 'create' | 'modify' | 'derivative';  // How to handle the base design
+  currentDesignData?: {  // Optional: current in-editor design data (for editing unsaved designs)
+    type: string;
+    effect?: string;
+    colors?: RGBWColor[] | Record<number, RGBWColor>;
+    speed?: number;
+    scope?: string;
+    params?: Record<string, unknown>;
+  };
 }
 
 export async function generateDesignFromDescription(
@@ -168,14 +219,30 @@ export async function generateDesignFromDescription(
     ? { description: descriptionOrOptions }
     : descriptionOrOptions;
 
-  const { description, baseDesignId, mode = 'create' } = options;
+  const { description, baseDesignId, mode = 'create', currentDesignData } = options;
 
+  const db = getDatabase();
+  const totalLights = (db.prepare('SELECT COUNT(*) as count FROM lights').get() as { count: number }).count;
   const layoutContext = getLightLayoutContext();
   const existingDesignsContext = getExistingDesignsContext();
 
   // If modifying an existing design, get its full data
   let baseDesignContext = '';
-  if (baseDesignId) {
+  if (currentDesignData) {
+    // Editing the current in-editor design directly
+    baseDesignContext = `
+CURRENT DESIGN TO EDIT:
+Type: ${currentDesignData.type}
+Effect: ${currentDesignData.effect || 'N/A'}
+Colors: ${JSON.stringify(currentDesignData.colors)}
+Speed: ${currentDesignData.speed || 1}
+Scope: ${currentDesignData.scope || 'all'}
+Params: ${JSON.stringify(currentDesignData.params, null, 2)}
+
+IMPORTANT: You MUST keep this design EXACTLY as it is — same structure, same code logic, same colors — and ONLY apply the specific modifications the user requests. Do NOT rewrite the code from scratch. Make minimal, targeted changes to the existing code to achieve what the user asks for.
+If the user asks to change colors, update the colors array. If they ask to change behavior, modify only the relevant parts of the code. Preserve everything else unchanged.
+`;
+  } else if (baseDesignId) {
     const baseDesign = getDesignById(baseDesignId);
     if (baseDesign) {
       baseDesignContext = `
@@ -190,8 +257,8 @@ Use this as your starting point and apply the requested changes.
     }
   }
 
-  const systemPrompt = `You are an expert lighting designer for architectural RGBW LED installations.
-You create beautiful, artistic light designs based on user descriptions.
+  const systemPrompt = `You are a precise lighting designer for architectural RGBW LED installations.
+You create ACCURATE, LITERAL light designs based on user descriptions.
 
 ${layoutContext}
 
@@ -199,43 +266,82 @@ ${existingDesignsContext}
 
 ${baseDesignContext}
 
+CRITICAL DESIGN RULES:
+1. Be LITERAL. If the user says "Swedish flag", produce the EXACT Swedish flag: blue background (#006AA7) with a yellow cross (#FECC00). Not an interpretation — the real thing.
+2. If the user says "American flag", produce the actual American flag pattern: blue canton top-left, red and white stripes. Map it to the grid as faithfully as possible given the 3-row constraint.
+3. For any named flag, pattern, or real-world reference: research the actual design and reproduce it precisely with correct colors.
+4. Only be "creative" when the user asks for something abstract (mood, theme, vibe). For concrete requests, be exact.
 INSTRUCTIONS:
-1. Analyze the user's description to understand what kind of light show they want
+1. Analyze the user's description — is it a concrete/literal request or an abstract/mood request?
 2. If referencing an existing design, use it as context for modifications or inspiration
 3. Decide if this should be a STATIC design (fixed colors) or MOTION design (animated effect)
 4. Generate the appropriate JSON response
 
-For STATIC designs, create an array of 96 RGBW color objects, one for each light (indexed by light_id 1-96).
-Think about:
-- Gradients across walls
-- Color zones (different colors for different walls or sections)
-- Patterns (stripes, alternating colors, etc.)
-- Artistic composition and color harmony
+For STATIC designs, specify colors PER WALL as a 2D grid: walls[wallName][y][x] = color.
+Each wall grid is an array of rows (y=0 first, y=2 last). Each row is an array of colors (x=0 to x=width-1).
+
+GRID LAYOUT (critical — get this right):
+- All walls are 3 rows tall: y=0 (bottom), y=1 (middle), y=2 (top)
+- West wall: 13 columns (x=0 left to x=12 right, viewed from outside)
+- North wall: 3 columns (x=0 left to x=2 right, viewed from outside)
+- East wall: 13 columns (x=0 left to x=12 right, viewed from outside)
+- South wall: 3 columns (x=0 left to x=2 right, viewed from outside)
+
+FLAG EXAMPLES (follow this level of precision):
+- Swedish flag: ALL lights blue {"r":0,"g":106,"b":167,"w":0}, EXCEPT y=1 (middle row, ALL columns) = yellow {"r":254,"g":204,"b":0,"w":0}, AND x=2 for North/South or x=4 for West/East (cross vertical bar) = yellow across ALL rows
+- American flag: top row blue in left columns + white/red, middle row red/white stripes, bottom row white/red stripes. Use actual flag colors: red {"r":178,"g":34,"b":52,"w":0}, white {"r":0,"g":0,"b":0,"w":255}, blue {"r":60,"g":59,"b":110,"w":0}
+- French flag: left 1/3 blue, middle 1/3 white, right 1/3 red (vertical stripes, same on every row)
+- Rainbow: row-by-row or column-by-column spectrum with actual rainbow colors
+
+PATTERN PRINCIPLES:
+- Horizontal stripes: same color for entire row across all walls
+- Vertical stripes: vary color by column (x) position
+- Gradients: smoothly interpolate colors across columns or rows
+- Per-wall themes: different colors/patterns for different walls
+- For flags with complex designs: simplify to fit 3 rows but keep proportions and colors accurate
 
 For MOTION designs, select the most appropriate effect and configure its parameters.
 Think about:
 - Which effect best matches the description
 - Appropriate colors that match the mood/theme
 - Speed and intensity settings
-- Direction of movement
 
 RESPONSE FORMAT (JSON only, no markdown):
 For static:
 {
   "type": "static",
   "name": "Descriptive Name",
-  "colors": [{"r":0,"g":0,"b":0,"w":0}, ...] // exactly 96 colors, index 0 = light_id 1, index 95 = light_id 96
+  "walls": {
+    "West": [
+      [color_y0_x0, color_y0_x1, ...],  // row y=0 (bottom), 13 colors
+      [color_y1_x0, color_y1_x1, ...],  // row y=1 (middle), 13 colors
+      [color_y2_x0, color_y2_x1, ...]   // row y=2 (top), 13 colors
+    ],
+    "North": [ [3 colors], [3 colors], [3 colors] ],
+    "East":  [ [13 colors], [13 colors], [13 colors] ],
+    "South": [ [3 colors], [3 colors], [3 colors] ]
+  }
 }
+Each color is {"r":0,"g":0,"b":0,"w":0}. Rows go from y=0 (bottom) to y=2 (top).
 
 For motion:
 {
   "type": "motion",
   "name": "Descriptive Name",
-  "effect": "effectName",
-  "params": { ... effect parameters ... }
+  "effect": "ai",
+  "colors": [
+    {"r":255,"g":0,"b":0,"w":0},
+    {"r":0,"g":0,"b":0,"w":255}
+  ],
+  "speed": 1.0,
+  "scope": "all",
+  "params": {
+    "code": "var out = {};\\nvar c = ctx.colors[0] || {r:255,g:0,b:0,w:0};\\n...\\nreturn out;"
+  }
 }
 
-Be creative and artistic! Match the mood, theme, and energy of the user's description.
+For concrete requests (flags, named patterns): prioritize ACCURACY over creativity. Get the colors and positions RIGHT.
+For abstract requests (moods, themes): be creative and artistic with color choices and patterns.
 ${baseDesignId ? `Remember: You are ${mode === 'modify' ? 'modifying' : 'creating a derivative of'} an existing design. Keep what works and change what the user requests.` : ''}`;
 
   try {
@@ -244,7 +350,7 @@ ${baseDesignId ? `Remember: You are ${mode === 'modify' ? 'modifying' : 'creatin
       : `Create a light design for: "${description}"`;
 
     const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-sonnet-4-5-20250929',
       max_tokens: 8192,
       messages: [
         {
@@ -262,7 +368,7 @@ ${baseDesignId ? `Remember: You are ${mode === 'modify' ? 'modifying' : 'creatin
     }
 
     // Parse the JSON response
-    let designData: GeneratedDesign;
+    let rawData: Record<string, unknown>;
     try {
       // Clean up potential markdown formatting
       let jsonStr = textContent.text.trim();
@@ -275,59 +381,99 @@ ${baseDesignId ? `Remember: You are ${mode === 'modify' ? 'modifying' : 'creatin
       if (jsonStr.endsWith('```')) {
         jsonStr = jsonStr.slice(0, -3);
       }
-      designData = JSON.parse(jsonStr.trim());
+      rawData = JSON.parse(jsonStr.trim());
     } catch {
       throw new Error('Failed to parse AI response as JSON');
     }
 
+    let designData: GeneratedDesign;
+    const { walls, lights } = getLayoutData();
+
     // Validate the design
-    if (designData.type === 'static') {
-      if (!Array.isArray(designData.colors) || designData.colors.length !== 96) {
-        throw new Error('Static design must have exactly 96 colors');
+    if (rawData.type === 'static') {
+      // Convert wall-grid format to flat color array
+      const wallGrids = rawData.walls as Record<string, RGBWColor[][]> | undefined;
+      if (!wallGrids || typeof wallGrids !== 'object') {
+        throw new Error('Static design must have a "walls" object with per-wall color grids');
       }
-      // Validate each color
-      for (const color of designData.colors) {
-        if (typeof color.r !== 'number' || typeof color.g !== 'number' ||
-            typeof color.b !== 'number' || typeof color.w !== 'number') {
-          throw new Error('Invalid color format');
+
+      // Clamp helper
+      const clamp = (c: RGBWColor): RGBWColor => ({
+        r: Math.max(0, Math.min(255, Math.round(c.r || 0))),
+        g: Math.max(0, Math.min(255, Math.round(c.g || 0))),
+        b: Math.max(0, Math.min(255, Math.round(c.b || 0))),
+        w: Math.max(0, Math.min(255, Math.round(c.w || 0))),
+      });
+
+      // Validate and clamp wall grids
+      for (const wall of walls) {
+        const grid = wallGrids[wall.name];
+        if (!grid || !Array.isArray(grid)) {
+          // Fill missing wall with black
+          wallGrids[wall.name] = Array.from({ length: wall.height }, () =>
+            Array.from({ length: wall.width }, () => ({ r: 0, g: 0, b: 0, w: 0 }))
+          );
+          continue;
         }
-        // Clamp values
-        color.r = Math.max(0, Math.min(255, Math.round(color.r)));
-        color.g = Math.max(0, Math.min(255, Math.round(color.g)));
-        color.b = Math.max(0, Math.min(255, Math.round(color.b)));
-        color.w = Math.max(0, Math.min(255, Math.round(color.w)));
+        for (let y = 0; y < wall.height; y++) {
+          if (!Array.isArray(grid[y])) {
+            grid[y] = Array.from({ length: wall.width }, () => ({ r: 0, g: 0, b: 0, w: 0 }));
+          }
+          // Pad/trim row to correct width
+          while (grid[y].length < wall.width) {
+            grid[y].push(grid[y][grid[y].length - 1] || { r: 0, g: 0, b: 0, w: 0 });
+          }
+          grid[y] = grid[y].slice(0, wall.width).map(clamp);
+        }
       }
-    } else if (designData.type === 'motion') {
-      const validEffects = ['candyCane', 'checkerboard', 'comet', 'sparkle', 'wave',
-                           'rainbow', 'chase', 'breathe', 'fire', 'twinkle'];
-      if (!validEffects.includes(designData.effect)) {
-        throw new Error(`Invalid effect: ${designData.effect}`);
+
+      // Convert to light_id color map, then to array
+      const colorMap = wallGridToColorMap(wallGrids, walls, lights);
+      const colorArray: RGBWColor[] = [];
+      for (let i = 1; i <= totalLights; i++) {
+        colorArray.push(colorMap[i] || { r: 0, g: 0, b: 0, w: 0 });
+      }
+
+      designData = {
+        type: 'static',
+        name: (rawData.name as string) || 'AI Design',
+        colors: colorArray,
+      };
+    } else if (rawData.type === 'motion') {
+      designData = rawData as unknown as MotionDesign;
+
+      // Ensure effect is 'ai'
+      if (designData.effect !== 'ai') {
+        designData.effect = 'ai';
+      }
+
+      // Ensure code exists
+      if (!designData.params) {
+        designData.params = {};
+      }
+      if (typeof designData.params.code !== 'string') {
+        designData.params.code = '';
+      }
+
+      // Add prompt from description
+      designData.params.prompt = description;
+
+      if (!Array.isArray(designData.colors)) {
+        designData.colors = [];
+      }
+      if (typeof designData.speed !== 'number') {
+        designData.speed = 1.0;
+      }
+      if (designData.scope !== 'all' && designData.scope !== 'wall' && designData.scope !== 'group') {
+        designData.scope = 'all';
       }
     } else {
       throw new Error('Design must be either static or motion type');
     }
 
-    // Save the design to the database
-    const db = getDatabase();
-    const designId = uuidv4();
-
-    if (designData.type === 'static') {
-      db.prepare(
-        'INSERT INTO designs (id, name, type, data) VALUES (?, ?, ?, ?)'
-      ).run(designId, designData.name, 'static', JSON.stringify({ colors: designData.colors }));
-    } else {
-      db.prepare(
-        'INSERT INTO designs (id, name, type, data) VALUES (?, ?, ?, ?)'
-      ).run(designId, designData.name, 'motion', JSON.stringify({
-        effect: designData.effect,
-        params: designData.params
-      }));
-    }
-
     return {
       success: true,
       design: designData,
-      designId
     };
 
   } catch (error) {

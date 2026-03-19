@@ -1,5 +1,6 @@
 import type {
   Wall,
+  WallGroup,
   Light,
   Design,
   Playlist,
@@ -70,6 +71,31 @@ export const layoutAPI = {
     fetchJSON<{ success: boolean }>(`/layout/lights/${id}`, {
       method: 'DELETE',
     }),
+
+  reorderWalls: (wallIds: string[]) =>
+    fetchJSON<{ success: boolean }>('/layout/walls/reorder', {
+      method: 'POST',
+      body: JSON.stringify({ wallIds }),
+    }),
+
+  getGroups: () => fetchJSON<WallGroup[]>('/layout/groups'),
+
+  createGroup: (data: { name: string }) =>
+    fetchJSON<WallGroup>('/layout/groups', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  updateGroup: (id: string, data: { name: string }) =>
+    fetchJSON<{ success: boolean }>(`/layout/groups/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+
+  deleteGroup: (id: string) =>
+    fetchJSON<{ success: boolean }>(`/layout/groups/${id}`, {
+      method: 'DELETE',
+    }),
 };
 
 // Designs API
@@ -117,7 +143,7 @@ export const playlistsAPI = {
       body: JSON.stringify(data),
     }),
 
-  update: (id: string, data: { name: string; play_mode: string; items?: { design_id: string; duration: number }[] }) =>
+  update: (id: string, data: { name: string; play_mode: string; items?: { design_id: string; duration: number; transition?: string }[] }) =>
     fetchJSON<{ success: boolean }>(`/playlists/${id}`, {
       method: 'PUT',
       body: JSON.stringify(data),
@@ -128,7 +154,7 @@ export const playlistsAPI = {
       method: 'DELETE',
     }),
 
-  addItem: (playlistId: string, data: { design_id: string; duration: number }) =>
+  addItem: (playlistId: string, data: { design_id: string; duration: number; transition?: string }) =>
     fetchJSON(`/playlists/${playlistId}/items`, {
       method: 'POST',
       body: JSON.stringify(data),
@@ -166,6 +192,8 @@ export const schedulesAPI = {
     design_type: string;
     start_date: string;
     end_date: string;
+    start_time?: string;
+    end_time?: string;
     priority?: number;
   }) =>
     fetchJSON<Schedule>('/schedules', {
@@ -211,6 +239,14 @@ export const aiAPI = {
     description: string;
     baseDesignId?: string;
     mode?: 'create' | 'modify' | 'derivative';
+    currentDesignData?: {
+      type: string;
+      effect?: string;
+      colors?: RGBW[] | Record<number, RGBW>;
+      speed?: number;
+      scope?: string;
+      params?: Record<string, unknown>;
+    };
   }) =>
     fetchJSON<{
       success: boolean;
@@ -219,6 +255,8 @@ export const aiAPI = {
         name: string;
         colors?: { r: number; g: number; b: number; w: number }[];
         effect?: string;
+        speed?: number;
+        scope?: string;
         params?: Record<string, unknown>;
       };
       designId?: string;
@@ -231,9 +269,9 @@ export const aiAPI = {
 
 // Preview API
 export const previewAPI = {
-  getStatus: () => fetchJSON<{ isLivePreview: boolean }>('/preview/status'),
+  getStatus: () => fetchJSON<{ isLivePreview: boolean; hasPreview: boolean; livePreviewInfo: { type: string; effectType?: string } | null }>('/preview/status'),
 
-  start: (data: { designId?: string; designType?: string; designData?: unknown }) =>
+  start: (data: { designId?: string; designType?: string; designData?: unknown; live?: boolean }) =>
     fetchJSON<{ success: boolean }>('/preview/start', {
       method: 'POST',
       body: JSON.stringify(data),
@@ -250,13 +288,18 @@ export const previewAPI = {
       method: 'POST',
     }),
 
+  clearSoft: () =>
+    fetchJSON<{ success: boolean }>('/preview/clear-soft', {
+      method: 'POST',
+    }),
+
   previewLights: (lights: { light_id: number; r: number; g: number; b: number; w: number }[]) =>
     fetchJSON<{ success: boolean }>('/preview/lights', {
       method: 'POST',
       body: JSON.stringify({ lights }),
     }),
 
-  previewEffect: (data: { effectType: string; colors: RGBW[]; params?: Record<string, unknown>; speed?: number; scope?: string }) =>
+  previewEffect: (data: { effectType: string; colors: RGBW[]; params?: Record<string, unknown>; speed?: number; scope?: string; live?: boolean }) =>
     fetchJSON<{ success: boolean }>('/preview/effect', {
       method: 'POST',
       body: JSON.stringify(data),

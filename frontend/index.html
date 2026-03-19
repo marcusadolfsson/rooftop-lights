@@ -9,5 +9,20 @@
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
+    <script>
+      // Auto-reload when page goes blank (e.g. after container restart)
+      ;(function() {
+        var checks = 0;
+        setInterval(function() {
+          var root = document.getElementById('root');
+          if (root && root.children.length === 0) {
+            checks++;
+            if (checks > 3) { window.location.reload(); }
+          } else {
+            checks = 0;
+          }
+        }, 2000);
+      })();
+    </script>
   </body>
 </html>

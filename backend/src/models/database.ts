@@ -40,6 +40,7 @@ function initializeTables(): void {
       light_id INTEGER NOT NULL,
       light_type TEXT DEFAULT 'RGBW',
       dmx_start_channel INTEGER NOT NULL,
+      defective_channels TEXT DEFAULT '',
       FOREIGN KEY (wall_id) REFERENCES walls(id) ON DELETE CASCADE
     )
   `);
@@ -59,6 +60,27 @@ function initializeTables(): void {
   const columns = database.prepare("PRAGMA table_info(artnet_config)").all() as { name: string }[];
   if (!columns.some(col => col.name === 'refresh_rate')) {
     database.exec('ALTER TABLE artnet_config ADD COLUMN refresh_rate INTEGER DEFAULT 40');
+  }
+
+  // Migration: Add defective_channels column if it doesn't exist
+  const lightColumns = database.prepare("PRAGMA table_info(lights)").all() as { name: string }[];
+  if (!lightColumns.some(col => col.name === 'defective_channels')) {
+    database.exec("ALTER TABLE lights ADD COLUMN defective_channels TEXT DEFAULT ''");
+  }
+
+  // Wall groups table
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS wall_groups (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      position INTEGER NOT NULL
+    )
+  `);
+
+  // Migration: Add group_id column to walls if it doesn't exist
+  const wallColumns = database.prepare("PRAGMA table_info(walls)").all() as { name: string }[];
+  if (!wallColumns.some(col => col.name === 'group_id')) {
+    database.exec('ALTER TABLE walls ADD COLUMN group_id TEXT DEFAULT NULL');
   }
 
   // Designs table
@@ -92,10 +114,17 @@ function initializeTables(): void {
       design_id TEXT NOT NULL,
       duration INTEGER NOT NULL,
       position INTEGER NOT NULL,
+      transition TEXT DEFAULT 'cut',
       FOREIGN KEY (playlist_id) REFERENCES playlists(id) ON DELETE CASCADE,
       FOREIGN KEY (design_id) REFERENCES designs(id) ON DELETE CASCADE
     )
   `);
+
+  // Migration: Add transition column to playlist_items if it doesn't exist
+  const piColumns = database.prepare("PRAGMA table_info(playlist_items)").all() as { name: string }[];
+  if (!piColumns.some(col => col.name === 'transition')) {
+    database.exec("ALTER TABLE playlist_items ADD COLUMN transition TEXT DEFAULT 'cut'");
+  }
 
   // Schedule table
   database.exec(`
@@ -113,6 +142,15 @@ function initializeTables(): void {
       FOREIGN KEY (playlist_id) REFERENCES playlists(id) ON DELETE SET NULL
     )
   `);
+
+  // Migration: Add start_time and end_time columns to schedules if they don't exist
+  const scheduleColumns = database.prepare("PRAGMA table_info(schedules)").all() as { name: string }[];
+  if (!scheduleColumns.some(col => col.name === 'start_time')) {
+    database.exec("ALTER TABLE schedules ADD COLUMN start_time TEXT DEFAULT '16:00'");
+  }
+  if (!scheduleColumns.some(col => col.name === 'end_time')) {
+    database.exec("ALTER TABLE schedules ADD COLUMN end_time TEXT DEFAULT '16:00'");
+  }
 
   // Initialize default ArtNet config if not exists
   const artnetConfig = database.prepare('SELECT id FROM artnet_config WHERE id = 1').get();

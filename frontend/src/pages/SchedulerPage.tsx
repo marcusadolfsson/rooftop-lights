@@ -1,13 +1,21 @@
 import { useState, useEffect } from 'react';
-import { designsAPI, playlistsAPI, schedulesAPI } from '../utils/api';
-import type { Design, Playlist, Schedule } from '../types';
+import { useLocation } from 'react-router-dom';
+import { designsAPI, playlistsAPI, schedulesAPI, layoutAPI, previewAPI } from '../utils/api';
+import { useWebSocket } from '../hooks/useWebSocket';
+import type { Design, Playlist, Schedule, LayoutData, RGBW } from '../types';
 
 function SchedulerPage() {
+  const { frameData } = useWebSocket();
+  const location = useLocation();
+  const isVisible = location.pathname === '/schedule';
+  const [layout, setLayout] = useState<LayoutData | null>(null);
   const [designs, setDesigns] = useState<Design[]>([]);
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [defaultSchedule, setDefaultSchedule] = useState<Schedule | null>(null);
   const [activeSchedule, setActiveSchedule] = useState<Schedule | null>(null);
+  const [livePreviewActive, setLivePreviewActive] = useState(false);
+  const [livePreviewInfo, setLivePreviewInfo] = useState<{ type: string; effectType?: string } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -22,27 +30,37 @@ function SchedulerPage() {
   const [selectedPlaylistId, setSelectedPlaylistId] = useState<string>('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
+  const [startTime, setStartTime] = useState('16:00');
+  const [endTime, setEndTime] = useState('16:00');
   const [priority, setPriority] = useState(0);
 
+  // Load/refresh data when page becomes visible
   useEffect(() => {
-    loadData();
-  }, []);
+    if (isVisible) {
+      loadData();
+    }
+  }, [isVisible]);
 
   const loadData = async () => {
     try {
       setLoading(true);
-      const [designsData, playlistsData, schedulesData, defaultData, activeData] = await Promise.all([
+      const [layoutData, designsData, playlistsData, schedulesData, defaultData, activeData, previewStatus] = await Promise.all([
+        layoutAPI.getLayout(),
         designsAPI.getAll(),
         playlistsAPI.getAll(),
         schedulesAPI.getAll(),
         schedulesAPI.getDefault(),
         schedulesAPI.getActive(),
+        previewAPI.getStatus(),
       ]);
+      setLayout(layoutData);
       setDesigns(designsData);
       setPlaylists(playlistsData);
       setSchedules(schedulesData.filter((s: Schedule) => !s.is_default));
       setDefaultSchedule(defaultData);
       setActiveSchedule(activeData);
+      setLivePreviewActive(previewStatus.isLivePreview);
+      setLivePreviewInfo(previewStatus.livePreviewInfo);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load data');
     } finally {
@@ -79,11 +97,15 @@ function SchedulerPage() {
         design_type: 'static' | 'motion' | 'playlist';
         start_date: string;
         end_date: string;
+        start_time: string;
+        end_time: string;
         priority: number;
       } = {
         design_type: selectedType,
         start_date: startDate,
         end_date: endDate,
+        start_time: startTime,
+        end_time: endTime,
         priority,
       };
 
@@ -126,6 +148,8 @@ function SchedulerPage() {
     setSelectedPlaylistId(schedule.playlist_id || '');
     setStartDate(schedule.start_date || '');
     setEndDate(schedule.end_date || '');
+    setStartTime(schedule.start_time || '16:00');
+    setEndTime(schedule.end_time || '16:00');
     setPriority(schedule.priority);
     setShowScheduleModal(true);
   };
@@ -136,12 +160,16 @@ function SchedulerPage() {
     setSelectedPlaylistId('');
     setStartDate('');
     setEndDate('');
+    setStartTime('16:00');
+    setEndTime('16:00');
     setPriority(0);
   };
 
-  const formatDate = (dateStr: string | null): string => {
+  const formatDate = (dateStr: string | null, timeStr?: string | null): string => {
     if (!dateStr) return 'N/A';
-    return new Date(dateStr).toLocaleDateString();
+    const date = new Date(dateStr).toLocaleDateString();
+    if (timeStr) return `${date} ${timeStr}`;
+    return date;
   };
 
   const getScheduleDisplayName = (schedule: Schedule): string => {
@@ -151,12 +179,77 @@ function SchedulerPage() {
     return schedule.design_name || 'Unknown Design';
   };
 
+  const getLightColor = (lightId: number): string => {
+    const color: RGBW | undefined = frameData[lightId];
+    if (!color) return '#222';
+    const r = Math.min(255, color.r + color.w);
+    const g = Math.min(255, color.g + color.w);
+    const b = Math.min(255, color.b + color.w);
+    return `rgb(${r}, ${g}, ${b})`;
+  };
+
   if (loading) {
     return <div className="page-header"><h1>Loading...</h1></div>;
   }
 
   return (
     <div>
+      {/* ArtNet Output Preview */}
+      {layout && (() => {
+        const maxRows = Math.max(...layout.walls.map(w => w.height));
+        return (
+          <div className="preview-strip">
+            <div className="preview-strip-header">
+              <div className="preview-strip-title">ArtNet Output</div>
+            </div>
+            <div className="preview-strip-grid-wrapper">
+              <div
+                className="preview-strip-grid"
+                style={{ gridTemplateColumns: layout.walls.map(w => `repeat(${w.width}, 1fr)`).join(' 6px ') }}
+              >
+                {Array.from({ length: maxRows }, (_, rowIdx) => {
+                  const y = maxRows - 1 - rowIdx;
+                  return layout.walls.flatMap((wall, wallIdx) => {
+                    const cells = Array.from({ length: wall.width }, (_, x) => {
+                      const light = wall.matrix?.[y]?.[x];
+                      if (!light || y >= wall.height) {
+                        return (
+                          <div
+                            key={`${wall.id}-${y}-${x}`}
+                            className="preview-strip-cell"
+                            style={{ backgroundColor: '#111' }}
+                          />
+                        );
+                      }
+                      return (
+                        <div
+                          key={light.id}
+                          className="preview-strip-cell"
+                          style={{ backgroundColor: getLightColor(light.light_id) }}
+                          title={`#${light.light_id} (${wall.name})`}
+                        />
+                      );
+                    });
+                    if (wallIdx < layout.walls.length - 1) {
+                      cells.push(<div key={`spacer-${wall.id}-${y}`} className="preview-strip-spacer" />);
+                    }
+                    return cells;
+                  });
+                })}
+              </div>
+              <div
+                className="preview-strip-labels"
+                style={{ gridTemplateColumns: layout.walls.map(w => `${w.width}fr`).join(' 6px ') }}
+              >
+                {layout.walls.map((wall, wallIdx) => (
+                  <>{wallIdx > 0 && <div key={`spacer-label-${wall.id}`} />}<div key={wall.id} className="preview-strip-label">{wall.name}</div></>
+                ))}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       <div className="page-header">
         <h1 className="page-title">Schedule</h1>
         <button
@@ -184,7 +277,37 @@ function SchedulerPage() {
         <div className="card-header">
           <h3 className="card-title">Currently Active</h3>
         </div>
-        {activeSchedule ? (
+        {livePreviewActive ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+            <div
+              style={{
+                width: '12px',
+                height: '12px',
+                borderRadius: '50%',
+                backgroundColor: 'var(--warning, #f59e0b)',
+                animation: 'pulse 2s infinite',
+              }}
+            />
+            <div>
+              <strong>Live Preview</strong>
+              <span style={{ color: 'var(--text-secondary)', marginLeft: '0.5rem' }}>
+                ({livePreviewInfo?.type || 'unknown'}{livePreviewInfo?.effectType ? ` - ${livePreviewInfo.effectType}` : ''})
+              </span>
+              <span
+                style={{
+                  backgroundColor: 'var(--warning, #f59e0b)',
+                  color: '#000',
+                  padding: '0.25rem 0.5rem',
+                  borderRadius: '4px',
+                  fontSize: '0.75rem',
+                  marginLeft: '0.5rem',
+                }}
+              >
+                Override
+              </span>
+            </div>
+          </div>
+        ) : activeSchedule ? (
           <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
             <div
               style={{
@@ -268,7 +391,7 @@ function SchedulerPage() {
                 <div className="schedule-item-info">
                   <h4>{getScheduleDisplayName(schedule)}</h4>
                   <p>
-                    {formatDate(schedule.start_date)} - {formatDate(schedule.end_date)}
+                    {formatDate(schedule.start_date, schedule.start_time)} - {formatDate(schedule.end_date, schedule.end_time)}
                     {schedule.priority > 0 && ` • Priority: ${schedule.priority}`}
                   </p>
                   <p style={{ color: 'var(--text-secondary)' }}>Type: {schedule.design_type}</p>
@@ -457,12 +580,32 @@ function SchedulerPage() {
               </div>
 
               <div className="form-group">
+                <label className="form-label">Start Time</label>
+                <input
+                  type="time"
+                  className="form-input"
+                  value={startTime}
+                  onChange={(e) => setStartTime(e.target.value)}
+                />
+              </div>
+
+              <div className="form-group">
                 <label className="form-label">End Date</label>
                 <input
                   type="date"
                   className="form-input"
                   value={endDate}
                   onChange={(e) => setEndDate(e.target.value)}
+                />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">End Time</label>
+                <input
+                  type="time"
+                  className="form-input"
+                  value={endTime}
+                  onChange={(e) => setEndTime(e.target.value)}
                 />
               </div>
             </div>

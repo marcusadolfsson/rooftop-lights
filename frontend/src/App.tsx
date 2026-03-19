@@ -1,4 +1,4 @@
-import { Routes, Route, NavLink } from 'react-router-dom';
+import { NavLink, useLocation } from 'react-router-dom';
 import { useWebSocket } from './hooks/useWebSocket';
 import LayoutPage from './pages/LayoutPage';
 import DesignPage from './pages/DesignPage';
@@ -6,6 +6,7 @@ import SchedulerPage from './pages/SchedulerPage';
 
 function App() {
   const { connected } = useWebSocket();
+  const location = useLocation();
 
   return (
     <div className="app">
@@ -44,11 +45,15 @@ function App() {
       </nav>
 
       <main className="main-content">
-        <Routes>
-          <Route path="/" element={<DesignPage />} />
-          <Route path="/schedule" element={<SchedulerPage />} />
-          <Route path="/layout" element={<LayoutPage />} />
-        </Routes>
+        <div style={{ display: location.pathname === '/' ? 'block' : 'none' }}>
+          <DesignPage />
+        </div>
+        <div style={{ display: location.pathname === '/schedule' ? 'block' : 'none' }}>
+          <SchedulerPage />
+        </div>
+        <div style={{ display: location.pathname === '/layout' ? 'block' : 'none' }}>
+          <LayoutPage />
+        </div>
       </main>
     </div>
   );

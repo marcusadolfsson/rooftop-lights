@@ -19,6 +19,7 @@ services:
     environment:
       - NODE_ENV=development
       - DATABASE_PATH=/app/data/rooftop-lights.db
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
     restart: unless-stopped
     networks:
       - rooftop-network

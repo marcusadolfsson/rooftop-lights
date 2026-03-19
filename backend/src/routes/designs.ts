@@ -136,7 +136,7 @@ router.delete('/:id', (req: Request, res: Response) => {
 
 // Generate design using AI
 router.post('/ai/generate', async (req: Request, res: Response) => {
-  const { description, baseDesignId, mode } = req.body;
+  const { description, baseDesignId, mode, currentDesignData } = req.body;
 
   if (!description || typeof description !== 'string') {
     res.status(400).json({ error: 'Description is required' });
@@ -167,7 +167,8 @@ router.post('/ai/generate', async (req: Request, res: Response) => {
     const result = await generateDesignFromDescription({
       description,
       baseDesignId,
-      mode: mode || 'create'
+      mode: mode || 'create',
+      currentDesignData,
     });
 
     if (result.success) {
@@ -202,6 +203,16 @@ router.get('/ai/status', (req: Request, res: Response) => {
 router.get('/effects/types', (req: Request, res: Response) => {
   const effectTypes = [
     {
+      type: 'ai',
+      name: 'AI',
+      description: 'AI-generated composite effect with base color and animated pattern overlay',
+      defaultColors: [
+        { r: 255, g: 0, b: 0, w: 0 },
+        { r: 0, g: 0, b: 0, w: 255 },
+      ],
+      params: {},
+    },
+    {
       type: 'candy_cane',
       name: 'Candy Cane',
       description: 'Red and white diagonal stripes scrolling like a barber pole',
@@ -209,7 +220,10 @@ router.get('/effects/types', (req: Request, res: Response) => {
         { r: 255, g: 0, b: 0, w: 0 },
         { r: 0, g: 0, b: 0, w: 255 },
       ],
-      params: {},
+      params: {
+        width1: { type: 'number', default: 4, min: 1, max: 16 },
+        width2: { type: 'number', default: 4, min: 1, max: 16 },
+      },
     },
     {
       type: 'checkerboard',
@@ -225,10 +239,14 @@ router.get('/effects/types', (req: Request, res: Response) => {
       type: 'comet',
       name: 'Comet Wave',
       description: 'A bright comet head with fading tail sweeping back and forth',
-      defaultColors: [{ r: 0, g: 0, b: 0, w: 255 }],
+      defaultColors: [
+        { r: 0, g: 0, b: 0, w: 255 },
+        { r: 0, g: 0, b: 200, w: 0 },
+      ],
       params: {
         tailLength: { type: 'number', default: 8, min: 2, max: 20 },
         reverse: { type: 'boolean', default: false },
+        bounce: { type: 'boolean', default: true },
       },
     },
     {
@@ -251,10 +269,15 @@ router.get('/effects/types', (req: Request, res: Response) => {
     {
       type: 'wave',
       name: 'Wave',
-      description: 'Sinusoidal brightness wave',
-      defaultColors: [{ r: 0, g: 0, b: 0, w: 255 }],
+      description: 'Sinusoidal brightness wave with color interpolation',
+      defaultColors: [
+        { r: 0, g: 0, b: 0, w: 255 },
+        { r: 0, g: 0, b: 200, w: 0 },
+      ],
       params: {
         wavelength: { type: 'number', default: 10, min: 3, max: 32 },
+        bounce: { type: 'boolean', default: false },
+        waveHeight: { type: 'number', default: 1.0, min: 0.1, max: 1.0, step: 0.1 },
       },
     },
     {
@@ -273,6 +296,15 @@ router.get('/effects/types', (req: Request, res: Response) => {
       defaultColors: [{ r: 0, g: 0, b: 0, w: 255 }],
       params: {
         speed: { type: 'number', default: 0.05, min: 0.01, max: 0.2, step: 0.01 },
+      },
+    },
+    {
+      type: 'text',
+      name: 'Text Scroll',
+      description: 'Scrolling text rendered with a pixel font',
+      defaultColors: [{ r: 0, g: 0, b: 0, w: 255 }],
+      params: {
+        text: { type: 'string', default: 'HELLO' },
       },
     },
   ];

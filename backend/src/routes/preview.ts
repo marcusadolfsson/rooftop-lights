@@ -10,14 +10,16 @@ router.get('/status', (req: Request, res: Response) => {
 
   res.json({
     isLivePreview: scheduler.isInLivePreview(),
+    hasPreview: scheduler.hasPreviewDesign(),
+    livePreviewInfo: scheduler.getLivePreviewInfo(),
   });
 });
 
-// Start live preview of a design
+// Start preview of a design (live=true sends to ArtNet, live=false is WebSocket only)
 router.post('/start', (req: Request, res: Response) => {
   const db = getDatabase();
   const scheduler = getScheduler();
-  const { designId, designType, designData } = req.body;
+  const { designId, designType, designData, live = true } = req.body;
 
   let type: string;
   let data: unknown;
@@ -42,9 +44,15 @@ router.post('/start', (req: Request, res: Response) => {
     return;
   }
 
-  scheduler.setLivePreview(true, { type, data });
+  const design = { type, data };
 
-  res.json({ success: true, message: 'Live preview started' });
+  if (live) {
+    scheduler.setLivePreview(true, design);
+  } else {
+    scheduler.setPreviewDesign(design);
+  }
+
+  res.json({ success: true, message: live ? 'Live preview started' : 'Preview started' });
 });
 
 // Start live preview of a playlist
@@ -74,9 +82,18 @@ router.post('/playlist', (req: Request, res: Response) => {
 router.post('/stop', (req: Request, res: Response) => {
   const scheduler = getScheduler();
 
-  scheduler.setLivePreview(false);
+
+  scheduler.clearPreview();
 
   res.json({ success: true, message: 'Live preview stopped, returning to schedule' });
+});
+
+// Clear WS-only preview (keeps live preview if active, lets schedule show on WS otherwise)
+router.post('/clear-soft', (req: Request, res: Response) => {
+  const scheduler = getScheduler();
+
+  scheduler.clearSoftPreview();
+  res.json({ success: true });
 });
 
 // Preview a static color on specific lights
@@ -100,25 +117,28 @@ router.post('/lights', (req: Request, res: Response) => {
     };
   }
 
-  scheduler.setLivePreview(true, {
-    type: 'static',
-    data: { colors },
-  });
+  const live = req.body.live !== undefined ? req.body.live : true;
+  const design = { type: 'static', data: { colors } };
+  if (live) {
+    scheduler.setLivePreview(true, design);
+  } else {
+    scheduler.setPreviewDesign(design);
+  }
 
   res.json({ success: true, message: 'Light preview active' });
 });
 
-// Preview a motion effect
+// Preview a motion effect (live=true sends to ArtNet, live=false is WebSocket only)
 router.post('/effect', (req: Request, res: Response) => {
   const scheduler = getScheduler();
-  const { effectType, colors, params, speed, scope } = req.body;
+  const { effectType, colors, params, speed, scope, live = true } = req.body;
 
   if (!effectType) {
     res.status(400).json({ error: 'effectType is required' });
     return;
   }
 
-  scheduler.setLivePreview(true, {
+  const design = {
     type: 'motion',
     data: {
       type: effectType,
@@ -127,9 +147,16 @@ router.post('/effect', (req: Request, res: Response) => {
       speed: speed || 1,
       scope: scope || 'all',
     },
-  });
+  };
 
-  res.json({ success: true, message: 'Effect preview active' });
+
+  if (live) {
+    scheduler.setLivePreview(true, design);
+  } else {
+    scheduler.setPreviewDesign(design);
+  }
+
+  res.json({ success: true, message: live ? 'Effect preview active (live)' : 'Effect preview active' });
 });
 
 export default router;

@@ -61,9 +61,12 @@ router.post('/default', (req: Request, res: Response) => {
 // Get active schedule (what's currently playing)
 router.get('/active', (req: Request, res: Response) => {
   const db = getDatabase();
-  const now = new Date().toISOString().split('T')[0];
+  const now = new Date();
+  const localDate = now.toLocaleDateString('en-CA'); // YYYY-MM-DD
+  const localTime = now.toTimeString().slice(0, 5); // HH:MM
+  const localDateTime = `${localDate} ${localTime}`;
 
-  // Check for date-specific schedule
+  // Check for date-specific schedule using full datetime comparison
   let schedule = db.prepare(`
     SELECT s.*,
            d.name as design_name,
@@ -72,11 +75,11 @@ router.get('/active', (req: Request, res: Response) => {
     LEFT JOIN designs d ON s.design_id = d.id
     LEFT JOIN playlists p ON s.playlist_id = p.id
     WHERE s.is_default = 0
-      AND s.start_date <= ?
-      AND s.end_date >= ?
+      AND datetime(s.start_date || ' ' || COALESCE(s.start_time, '16:00')) <= datetime(?)
+      AND datetime(s.end_date || ' ' || COALESCE(s.end_time, '16:00')) >= datetime(?)
     ORDER BY s.priority DESC
     LIMIT 1
-  `).get(now, now);
+  `).get(localDateTime, localDateTime);
 
   if (!schedule) {
     // Fall back to default
@@ -98,28 +101,28 @@ router.get('/active', (req: Request, res: Response) => {
 // Create a date-specific schedule
 router.post('/', (req: Request, res: Response) => {
   const db = getDatabase();
-  const { design_id, playlist_id, design_type, start_date, end_date, priority = 0 } = req.body;
+  const { design_id, playlist_id, design_type, start_date, end_date, start_time = '16:00', end_time = '16:00', priority = 0 } = req.body;
   const id = uuidv4();
 
   db.prepare(`
-    INSERT INTO schedules (id, design_id, playlist_id, design_type, is_default, start_date, end_date, priority, created_at)
-    VALUES (?, ?, ?, ?, 0, ?, ?, ?, datetime('now'))
-  `).run(id, design_id || null, playlist_id || null, design_type, start_date, end_date, priority);
+    INSERT INTO schedules (id, design_id, playlist_id, design_type, is_default, start_date, end_date, start_time, end_time, priority, created_at)
+    VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, datetime('now'))
+  `).run(id, design_id || null, playlist_id || null, design_type, start_date, end_date, start_time, end_time, priority);
 
-  res.json({ id, design_id, playlist_id, design_type, is_default: 0, start_date, end_date, priority });
+  res.json({ id, design_id, playlist_id, design_type, is_default: 0, start_date, end_date, start_time, end_time, priority });
 });
 
 // Update a schedule
 router.put('/:id', (req: Request, res: Response) => {
   const db = getDatabase();
   const { id } = req.params;
-  const { design_id, playlist_id, design_type, start_date, end_date, priority } = req.body;
+  const { design_id, playlist_id, design_type, start_date, end_date, start_time, end_time, priority } = req.body;
 
   db.prepare(`
     UPDATE schedules
-    SET design_id = ?, playlist_id = ?, design_type = ?, start_date = ?, end_date = ?, priority = ?
+    SET design_id = ?, playlist_id = ?, design_type = ?, start_date = ?, end_date = ?, start_time = ?, end_time = ?, priority = ?
     WHERE id = ?
-  `).run(design_id || null, playlist_id || null, design_type, start_date, end_date, priority, id);
+  `).run(design_id || null, playlist_id || null, design_type, start_date, end_date, start_time || '16:00', end_time || '16:00', priority, id);
 
   res.json({ success: true });
 });
