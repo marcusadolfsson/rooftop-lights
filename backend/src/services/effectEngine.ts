@@ -571,8 +571,9 @@ export class EffectEngine {
     const ctx = {
       frame: frameNum,
       colors: effect.colors,
+      scope: effect.scope || 'all',
       lights: this.getAILightContext(),
-      walls: this.walls.map(w => ({ name: w.name, width: w.width, height: w.height })),
+      walls: this.walls.map(w => ({ name: w.name, width: w.width, height: w.height, groupId: w.group_id })),
       width: this.walls.reduce((s, w) => s + w.width, 0),
       height: Math.max(...this.walls.map(w => w.height)),
     };

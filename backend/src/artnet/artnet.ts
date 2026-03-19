@@ -19,12 +19,19 @@ export class ArtNetController {
   private config: ArtNetConfig;
   private sequence: number = 0;
   private dmxData: Buffer;
+  private lastSentData: Buffer;
+  private dirty: boolean = true;
+  private framesSinceLastSend: number = 0;
+  private sendCount: number = 0;
+  private lastSendRate: number = 0;
+  private rateIntervalId: NodeJS.Timeout | null = null;
   private isRunning: boolean = false;
   private intervalId: NodeJS.Timeout | null = null;
 
   constructor(config: ArtNetConfig) {
     this.config = config;
     this.dmxData = Buffer.alloc(512, 0);
+    this.lastSentData = Buffer.alloc(512, 0);
   }
 
   start(): void {
@@ -45,6 +52,12 @@ export class ArtNetController {
 
       // Send DMX at configured refresh rate
       this.startInterval();
+
+      // Track send rate every second
+      this.rateIntervalId = setInterval(() => {
+        this.lastSendRate = this.sendCount;
+        this.sendCount = 0;
+      }, 1000);
     });
   }
 
@@ -54,6 +67,11 @@ export class ArtNetController {
     if (this.intervalId) {
       clearInterval(this.intervalId);
       this.intervalId = null;
+    }
+
+    if (this.rateIntervalId) {
+      clearInterval(this.rateIntervalId);
+      this.rateIntervalId = null;
     }
 
     if (this.socket) {
@@ -94,6 +112,11 @@ export class ArtNetController {
     }
   }
 
+  // Call after writing a frame that should always be sent (motion effects)
+  markDirty(): void {
+    this.dirty = true;
+  }
+
   setRGBW(startChannel: number, r: number, g: number, b: number, w: number): void {
     this.setChannel(startChannel, r);
     this.setChannel(startChannel + 1, g);
@@ -111,14 +134,30 @@ export class ArtNetController {
     for (let i = 0; i < Math.min(data.length, 512); i++) {
       this.dmxData[i] = Math.max(0, Math.min(255, data[i]));
     }
+    this.dirty = true;
   }
 
   blackout(): void {
     this.dmxData.fill(0);
+    this.dirty = true;
   }
 
   private sendDMX(): void {
     if (!this.socket || !this.isRunning) return;
+
+    this.framesSinceLastSend++;
+
+    // Calculate keepalive interval (~1 second worth of frames)
+    const fps = Math.max(1, Math.min(44, this.config.refreshRate || 40));
+    const keepaliveFrames = fps;
+
+    // Skip if data hasn't changed and we're not due for a keepalive
+    if (!this.dirty && this.framesSinceLastSend < keepaliveFrames) return;
+
+    this.dirty = false;
+    this.framesSinceLastSend = 0;
+    this.sendCount++;
+    this.dmxData.copy(this.lastSentData);
 
     this.sequence = (this.sequence + 1) % 256;
 
@@ -157,6 +196,10 @@ export class ArtNetController {
 
   getDMXData(): Buffer {
     return Buffer.from(this.dmxData);
+  }
+
+  getSendRate(): number {
+    return this.lastSendRate;
   }
 }
 

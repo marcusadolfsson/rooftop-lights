@@ -151,13 +151,20 @@ export class Scheduler {
 
     let artnetFrame: Map<number, RGBW>;
     let wsFrame: Map<number, RGBW>;
+    let isAnimated = false;
 
     // Determine what to show on ArtNet
     if (this.isLivePreview && this.livePreviewDesign) {
       artnetFrame = this.renderDesign(this.livePreviewDesign.type, this.livePreviewDesign.data);
+      isAnimated = this.livePreviewDesign.type === 'motion';
     } else {
       const activeSchedule = this.getActiveSchedule();
-      artnetFrame = activeSchedule ? this.renderSchedule(activeSchedule) : new Map();
+      if (activeSchedule) {
+        artnetFrame = this.renderSchedule(activeSchedule);
+        isAnimated = activeSchedule.design_type === 'motion' || activeSchedule.design_type === 'playlist';
+      } else {
+        artnetFrame = new Map();
+      }
     }
 
     // Determine what to broadcast to WebSocket (preview design takes priority)
@@ -173,6 +180,12 @@ export class Scheduler {
     }
 
     this.applyFrame(artnet, artnetFrame);
+
+    // Motion/playlist content: always send every frame
+    if (isAnimated) {
+      artnet.markDirty();
+    }
+
     this.broadcastFrame(wsFrame);
 
     this.currentFrame++;
@@ -337,9 +350,11 @@ export class Scheduler {
       frameObj[light.light_id] = frameData.get(light.light_id) || black;
     }
 
+    const artnet = getArtNetController();
     const message = JSON.stringify({
       type: 'frame',
       data: frameObj,
+      dmxRate: artnet ? artnet.getSendRate() : 0,
     });
 
     for (const client of this.wsClients) {

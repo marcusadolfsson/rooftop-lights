@@ -6,6 +6,7 @@ interface UseWebSocketResult {
   frameData: Record<number, RGBW>;
   walls: Wall[];
   lights: Light[];
+  dmxRate: number;
 }
 
 export function useWebSocket(): UseWebSocketResult {
@@ -13,6 +14,7 @@ export function useWebSocket(): UseWebSocketResult {
   const [frameData, setFrameData] = useState<Record<number, RGBW>>({});
   const [walls, setWalls] = useState<Wall[]>([]);
   const [lights, setLights] = useState<Light[]>([]);
+  const [dmxRate, setDmxRate] = useState(0);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<number | null>(null);
 
@@ -33,6 +35,9 @@ export function useWebSocket(): UseWebSocketResult {
 
         if (message.type === 'frame') {
           setFrameData(message.data as Record<number, RGBW>);
+          if ((message as any).dmxRate !== undefined) {
+            setDmxRate((message as any).dmxRate);
+          }
         } else if (message.type === 'layout') {
           const layoutData = message.data as { walls: Wall[]; lights: Light[] };
           setWalls(layoutData.walls);
@@ -73,5 +78,5 @@ export function useWebSocket(): UseWebSocketResult {
     };
   }, [connect]);
 
-  return { connected, frameData, walls, lights };
+  return { connected, frameData, walls, lights, dmxRate };
 }

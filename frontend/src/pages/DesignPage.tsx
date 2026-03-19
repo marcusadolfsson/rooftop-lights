@@ -1414,13 +1414,14 @@ function DesignPage() {
               {selectedDesign ? (
                 <button className="btn btn-primary btn-sm" onClick={() => { setSelectedDesign(null); setSelectedEffect(null); setMotionColors([]); setMotionSpeed(1); setMotionScope('all'); setMotionParams({}); savedMotionRef.current = '{}'; }}>New</button>
               ) : (
-                hasMotionChanges && selectedEffect && <button className="btn btn-secondary btn-sm" onClick={async () => { setSelectedEffect(null); setMotionColors([]); setMotionSpeed(1); setMotionScope('all'); setMotionParams({}); savedMotionRef.current = '{}'; try { await previewAPI.stop(); setIsLivePreview(false); } catch {} }}>Clear</button>
+                selectedEffect && <button className="btn btn-secondary btn-sm" onClick={async () => { setSelectedEffect(null); setMotionColors([]); setMotionSpeed(1); setMotionScope('all'); setMotionParams({}); savedMotionRef.current = '{}'; try { await previewAPI.stop(); setIsLivePreview(false); } catch {} }}>Clear</button>
               )}
               {hasMotionChanges && selectedDesign && <button className="btn btn-primary btn-sm" onClick={handleSaveDesign}>Save</button>}
               {hasMotionChanges && selectedDesign && <button className="btn btn-secondary btn-sm" onClick={() => setShowSaveModal(true)}>Save As</button>}
-              {hasMotionChanges && !selectedDesign && selectedEffect && <button className="btn btn-primary btn-sm" onClick={() => setShowSaveModal(true)}>Save</button>}
+              {!selectedDesign && selectedEffect && <button className="btn btn-primary btn-sm" onClick={() => setShowSaveModal(true)}>Save</button>}
               {selectedDesign && hasMotionChanges && <button className="btn btn-secondary btn-sm" onClick={async () => { const saved = JSON.parse(savedMotionRef.current); if (saved.effect) { const effect = effectTypes.find(e => e.type === saved.effect); if (effect) { setSelectedEffect(effect); setMotionColors(saved.colors || effect.defaultColors); setMotionSpeed(saved.speed || 1); setMotionScope(saved.scope || 'all'); setMotionParams(saved.params || {}); try { await previewAPI.previewEffect({ effectType: effect.type, colors: saved.colors || effect.defaultColors, params: saved.params || {}, speed: saved.speed || 1, scope: saved.scope || 'all', live: false }); } catch {} } } }}>Cancel</button>}
             </div>
+            {!selectedDesign && (
             <div className="card">
               <div className="card-header"><h3 className="card-title">Effect Type</h3></div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
@@ -1429,6 +1430,7 @@ function DesignPage() {
                 ))}
               </div>
             </div>
+            )}
             {selectedEffect && (
               <div className="card">
                 <div className="card-header"><h3 className="card-title">{selectedEffect.name}</h3></div>

@@ -5,7 +5,7 @@ import DesignPage from './pages/DesignPage';
 import SchedulerPage from './pages/SchedulerPage';
 
 function App() {
-  const { connected } = useWebSocket();
+  const { connected, dmxRate } = useWebSocket();
   const location = useLocation();
 
   return (
@@ -38,7 +38,7 @@ function App() {
               <span
                 className={`status-dot ${connected ? 'connected' : 'disconnected'}`}
               />
-              <span>{connected ? 'Connected' : 'Disconnected'}</span>
+              <span>{connected ? `DMX ${dmxRate} pkt/s` : 'Disconnected'}</span>
             </div>
           </div>
         </div>

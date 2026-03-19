@@ -114,6 +114,7 @@ Structure:
 - "effect": always "ai"
 - "colors": array of RGBW color objects the user can edit after generation
 - "speed": number (0.1-5) controlling animation speed (applied before your code runs)
+- "scope": "all" | "wall" | "group" — how the animation should tile (see SCOPE below)
 - "params": { "code": "...javascript function body..." }
 
 The code is the BODY of a function receiving a single argument \`ctx\`. It must RETURN an object mapping light IDs (numbers) to {r,g,b,w} color objects (values 0-255).
@@ -121,15 +122,25 @@ The code is the BODY of a function receiving a single argument \`ctx\`. It must 
 CONTEXT OBJECT (ctx):
 - ctx.frame: number — current frame counter (~30fps, already speed-adjusted)
 - ctx.colors: array of {r,g,b,w} — the editable color palette from "colors" field
+- ctx.scope: "all" | "wall" | "group" — the user-selected scope
 - ctx.lights: array of light objects, each with:
     .id — light ID (use as key in return object)
     .x — column within its wall (0-based)
     .y — row (0 = bottom, 1 = middle, 2 = top)
     .wallIndex — which wall (0-3)
     .cx — continuous x across all walls (0 to width-1)
-- ctx.walls: array of {name, width, height} — wall info
+- ctx.walls: array of {name, width, height, groupId} — wall info (groupId groups walls together)
 - ctx.width: total columns across all walls (e.g. 32)
 - ctx.height: max rows (e.g. 3)
+
+SCOPE — Your code MUST respect ctx.scope to control how the animation tiles:
+- "all": treat all walls as one continuous strip. Use L.cx for horizontal position (0 to ctx.width-1).
+- "wall": each wall runs its own independent copy of the animation. Use L.x for position (0 to wall width-1), and reset animation per L.wallIndex.
+- "group": walls sharing the same groupId animate together as one strip, ungrouped walls animate independently. Use L.wallIndex and ctx.walls[L.wallIndex].groupId to determine grouping.
+To implement scope, compute the horizontal position and segment width based on scope:
+  - scope "all": pos = L.cx, segWidth = ctx.width
+  - scope "wall": pos = L.x, segWidth = ctx.walls[L.wallIndex].width
+  - scope "group": compute per-group cx offset and width from ctx.walls
 
 RULES:
 1. RETURN an object: { [lightId]: {r, g, b, w} }. Lights not in the object stay off (black).
@@ -139,8 +150,8 @@ RULES:
 5. No imports, fetch, setTimeout, setInterval, or async. Pure computation only.
 6. Keep code concise. Use \\n for newlines in the JSON string.
 
-EXAMPLE — Red background with bouncing white comet:
-"code": "var out = {};\\nvar base = ctx.colors[0] || {r:255,g:0,b:0,w:0};\\nvar head = ctx.colors[1] || {r:0,g:0,b:0,w:255};\\nvar len = ctx.width;\\nvar step = Math.floor(ctx.frame / 4);\\nvar cycle = len * 2;\\nvar raw = step % cycle;\\nvar pos = raw >= len ? cycle - raw - 1 : raw;\\nfor (var i = 0; i < ctx.lights.length; i++) {\\n  var L = ctx.lights[i];\\n  var dist = Math.abs(L.cx - pos);\\n  if (dist < 6) {\\n    var b = 1 - dist / 6;\\n    out[L.id] = {r: Math.round(head.r*b), g: Math.round(head.g*b), b: Math.round(head.b*b), w: Math.round(head.w*b)};\\n  } else {\\n    out[L.id] = base;\\n  }\\n}\\nreturn out;"
+EXAMPLE — Scope-aware bouncing comet (works with all/wall/group):
+"code": "var out = {};\\nvar base = ctx.colors[0] || {r:255,g:0,b:0,w:0};\\nvar head = ctx.colors[1] || {r:0,g:0,b:0,w:255};\\n// Compute per-light segment position and width based on scope\\nfunction getSegment(L) {\\n  if (ctx.scope === 'wall') return { pos: L.x, width: ctx.walls[L.wallIndex].width };\\n  return { pos: L.cx, width: ctx.width };\\n}\\nvar step = Math.floor(ctx.frame / 4);\\nfor (var i = 0; i < ctx.lights.length; i++) {\\n  var L = ctx.lights[i];\\n  var seg = getSegment(L);\\n  var cycle = seg.width * 2;\\n  var raw = step % cycle;\\n  var headPos = raw >= seg.width ? cycle - raw - 1 : raw;\\n  var dist = Math.abs(seg.pos - headPos);\\n  if (dist < 6) {\\n    var b = 1 - dist / 6;\\n    out[L.id] = {r: Math.round(head.r*b), g: Math.round(head.g*b), b: Math.round(head.b*b), w: Math.round(head.w*b)};\\n  } else {\\n    out[L.id] = base;\\n  }\\n}\\nreturn out;"
 
 EXAMPLE — Snake game (green snake on black):
 "code": "var out = {};\\nvar snakeColor = ctx.colors[0] || {r:0,g:255,b:0,w:0};\\nvar foodColor = ctx.colors[1] || {r:255,g:0,b:0,w:0};\\nvar len = ctx.width;\\nvar snakeLen = 6;\\nvar step = Math.floor(ctx.frame / 5);\\nvar pos = step % (len * 2);\\nvar headX = pos < len ? pos : len * 2 - pos - 1;\\nvar headY = pos < len ? 0 : (Math.floor(step / (len*2)) % 3);\\nvar foodX = (step * 7 + 13) % len;\\nvar foodY = (step * 3 + 7) % 3;\\nfor (var i = 0; i < ctx.lights.length; i++) {\\n  var L = ctx.lights[i];\\n  var trail = headX - L.cx;\\n  if (pos >= len) trail = L.cx - headX;\\n  if (L.y === headY && trail >= 0 && trail < snakeLen) {\\n    var bright = 1 - trail / snakeLen * 0.6;\\n    out[L.id] = {r: Math.round(snakeColor.r*bright), g: Math.round(snakeColor.g*bright), b: Math.round(snakeColor.b*bright), w: 0};\\n  } else if (L.cx === foodX && L.y === foodY) {\\n    out[L.id] = foodColor;\\n  }\\n}\\nreturn out;"
