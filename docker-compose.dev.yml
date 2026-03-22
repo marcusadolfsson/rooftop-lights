@@ -15,7 +15,7 @@ services:
       - ./frontend/index.html:/app/frontend/index.html
       - ./frontend/vite.config.ts:/app/frontend/vite.config.ts
       # Persistent data
-      - ./data:/app/data
+      - rooftop-data:/app/data
     environment:
       - NODE_ENV=development
       - DATABASE_PATH=/app/data/rooftop-lights.db
@@ -23,6 +23,11 @@ services:
     restart: unless-stopped
     networks:
       - rooftop-network
+
+volumes:
+  rooftop-data:
+    name: rooftop-data
+    external: true
 
 networks:
   rooftop-network:

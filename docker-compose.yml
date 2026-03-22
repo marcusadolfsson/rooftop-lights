@@ -9,7 +9,7 @@ services:
       - "3030:3030"
       - "6454:6454/udp"  # ArtNet port
     volumes:
-      - ./data:/app/data
+      - rooftop-data:/app/data
     environment:
       - NODE_ENV=production
       - DATABASE_PATH=/app/data/rooftop-lights.db
@@ -17,6 +17,11 @@ services:
     restart: unless-stopped
     networks:
       - rooftop-network
+
+volumes:
+  rooftop-data:
+    name: rooftop-data
+    external: true
 
 networks:
   rooftop-network:
