@@ -93,7 +93,7 @@ export function compileAICode(code: string): { ok: true } | { ok: false; error: 
 }
 
 export interface AILayout {
-  lights: Array<{ id: number; x: number; y: number; wallIndex: number; cx: number }>;
+  lights: Array<{ id: number; x: number; y: number; wallIndex: number; cx: number; dead: string }>;
   walls: Array<{ name: string; width: number; height: number; groupId: string | null }>;
   width: number;
   height: number;

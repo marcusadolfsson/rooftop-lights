@@ -695,7 +695,7 @@ export class EffectEngine {
         for (let x = 0; x < wall.width; x++) {
           const light = matrix[y]?.[x];
           if (light) {
-            lights.push({ id: light.light_id, x, y, wallIndex: wallIdx, cx: cx + x });
+            lights.push({ id: light.light_id, x, y, wallIndex: wallIdx, cx: cx + x, dead: (light.defective_channels || '').replace(/,/g, '') });
           }
         }
       }

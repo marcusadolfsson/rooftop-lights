@@ -196,10 +196,34 @@ function wallGridToColorMap(
   return colorMap;
 }
 
+// Compact per-wall map of dead channels, e.g. "y=2: 0:gb 1:- 2:r ..." so the model can design around them
+function getDefectiveContext(walls: WallInfo[], lights: LightInfo[]): string {
+  const broken = lights.filter(l => l.defective_channels);
+  if (broken.length === 0) return '- All channels on all lights work.';
+  const code = (l?: LightInfo) => (l?.defective_channels ? l.defective_channels.replace(/,/g, '') : '-');
+  const counts: Record<string, number> = { r: 0, g: 0, b: 0, w: 0 };
+  for (const l of broken) for (const ch of l.defective_channels.split(',')) if (ch in counts) counts[ch]++;
+  const perWall = walls.map(w => {
+    const rows: string[] = [];
+    for (let y = w.height - 1; y >= 0; y--) {
+      const cells: string[] = [];
+      for (let x = 0; x < w.width; x++) {
+        cells.push(`${x}:${code(lights.find(l => l.wall_id === w.id && l.matrix_x === x && l.matrix_y === y))}`);
+      }
+      rows.push(`    y=${y}: ${cells.join(' ')}`);
+    }
+    return `  ${w.name}:\n${rows.join('\n')}`;
+  }).join('\n');
+  return `- ${broken.length} of ${lights.length} lights have dead channels (lights with dead R: ${counts.r}, G: ${counts.g}, B: ${counts.b}, W: ${counts.w}).
+- Map (x = column viewed from outside, letters = DEAD channels on that light, "-" = all channels work):
+${perWall}`;
+}
+
 function getLightLayoutContext(): string {
   const { walls, lights } = getLayoutData();
 
   const totalLights = lights.length;
+  const defectiveContext = getDefectiveContext(walls, lights);
 
   const wallDescriptions = walls.map(w =>
     `  - ${w.name}: ${w.width} columns x ${w.height} rows (${w.width * w.height} lights)`
@@ -214,6 +238,12 @@ ${wallDescriptions}
 - Rows: y=0 is bottom, y=2 is top
 - Columns: x=0 is left (viewed from outside)
 - West and East are the long walls (13 wide), North and South are short (3 wide)
+
+DEFECTIVE CHANNELS (hardware faults — dead channels always output 0, whatever you send):
+${defectiveContext}
+- Design for what the lights can actually show. A color that only uses dead channels comes out dark on that light, and a mixed color loses its dead components (e.g. purple on a light with dead blue shows red).
+- When the requested look depends on dead channels, pick colors that still read well on the working channels (the W channel is a clean white; R is the most widely working color channel), unless the user explicitly asks to ignore defects.
+- In motion code, each light's dead channels are available as L.dead (a string like "gb"; "" when all work) so the animation can adapt per light.
 
 MOTION DESIGN FORMAT:
 All motion designs use effect: "ai" with custom JavaScript animation code.
@@ -238,6 +268,7 @@ CONTEXT OBJECT (ctx):
     .y — row (0 = bottom, 1 = middle, 2 = top)
     .wallIndex — which wall (0-3)
     .cx — continuous x across all walls (0 to width-1)
+    .dead — dead channels on this light, e.g. "gb" ("" when all channels work)
 - ctx.walls: array of {name, width, height, groupId} — wall info (groupId groups walls together)
 - ctx.width: total columns across all walls (e.g. 32)
 - ctx.height: max rows (e.g. 3)
