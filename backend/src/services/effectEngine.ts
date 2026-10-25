@@ -589,6 +589,8 @@ export class EffectEngine {
         return this.generateRainbow(effect, frameNum);
       case 'wave':
         return this.generateWave(effect, frameNum);
+      case 'sine':
+        return this.generateSine(effect, frameNum);
       case 'chase':
         // Chase was merged into Comet (a chase is a comet with no tail); older designs still render
         return this.generateComet(chaseAsComet(effect), frameNum);
@@ -895,6 +897,32 @@ export class EffectEngine {
           // Half a light of slack so an even-length row starts with its two middle lights
           const lit = radius >= 0 && Math.abs(j - center) <= radius + 0.5;
           frame.set(row[j].light_id, lit ? { ...fill } : { ...background });
+        }
+      }
+    }
+    return frame;
+  }
+
+  // Sine Wave - a sine curve drawn across the rows, rolling along the walls. Each light's
+  // brightness falls off with its distance from the curve, so the shape reads on a few rows.
+  private generateSine(effect: MotionEffect, frameNum: number): Map<number, RGBW> {
+    const frame = new Map<number, RGBW>();
+    const line: RGBW = effect.colors[0] || { r: 0, g: 0, b: 0, w: 255 };
+    const background: RGBW = effect.colors[1] || BLACK;
+    const wavelength = num(effect.params?.wavelength, 8, 2, 1000);
+    const middle = (this.rows - 1) / 2;
+    // Height is how far the curve swings above and below the middle row, in rows
+    const height = num(effect.params?.height, middle, 0, Math.max(0.5, middle * 2));
+    const thickness = num(effect.params?.thickness, 0.7, 0.2, 3);
+    const reverse = bool(effect.params?.reverse, false);
+    const travel = frameNum * WAVE_LIGHTS_PER_FRAME * (reverse ? -1 : 1);
+
+    for (let y = 0; y < this.rows; y++) {
+      for (const row of this.getSegments(y, effect.scope)) {
+        for (let j = 0; j < row.length; j++) {
+          const curveY = middle + height * Math.sin(((j - travel) / wavelength) * Math.PI * 2);
+          const k = Math.max(0, 1 - Math.abs(y - curveY) / thickness);
+          frame.set(row[j].light_id, mixColor(background, line, k));
         }
       }
     }

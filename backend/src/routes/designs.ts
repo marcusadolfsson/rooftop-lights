@@ -337,9 +337,24 @@ router.get('/effects/types', (req: Request, res: Response) => {
       ],
       params: {
         wavelength: { type: 'number', default: 8, min: 2, max: 32, label: 'Wavelength', unit: ' lights' },
-        depth: { type: 'number', default: 0.6, min: 0, max: 1, step: 0.05, label: 'Depth' },
+        depth: { type: 'number', default: 0.6, min: 0, max: 1, step: 0.05, label: 'Trough dimming' },
         bounce: { type: 'boolean', default: false, label: 'Back and forth' },
         angle: { type: 'number', default: 0, min: -180, max: 180, step: 15, label: 'Angle', unit: '°' },
+      },
+    },
+    {
+      type: 'sine',
+      name: 'Sine Wave',
+      description: 'A sine curve drawn across the rows, rolling along the walls',
+      defaultColors: [
+        { r: 0, g: 0, b: 0, w: 255 },
+        { r: 0, g: 0, b: 0, w: 0 },
+      ],
+      params: {
+        wavelength: { type: 'number', default: 8, min: 2, max: 32, label: 'Wavelength', unit: ' lights' },
+        height: { type: 'number', default: 1, min: 0, max: 2, step: 0.1, label: 'Height', unit: ' rows' },
+        thickness: { type: 'number', default: 0.7, min: 0.2, max: 2, step: 0.1, label: 'Line thickness', unit: ' rows' },
+        reverse: { type: 'boolean', default: false },
       },
     },
     {
@@ -481,8 +496,9 @@ router.get('/effects/types', (req: Request, res: Response) => {
     checkerboard: { colorLabels: ['Square A', 'Square B'] },
     comet: { colorLabels: ['Head', 'Tail'], colorHint: 'The tail fades from the head color toward the tail color' },
     sparkle: { colorLabels: ['Sparkle'] },
-    wave: { colorLabels: ['Trough', 'Crest'], colorHint: 'The wave blends from the trough color to the crest color; Depth dims the troughs' },
+    wave: { colorLabels: ['Trough', 'Crest'], colorHint: 'The wave blends from the trough color to the crest color; Trough dimming darkens the troughs' },
     expand: { colorLabels: ['Fill', 'Background'] },
+    sine: { colorLabels: ['Line', 'Background'] },
     converge: { colorLabels: ['Left', 'Right', 'Meet'], colorHint: 'Meet is shown while the two groups are together in the middle' },
     breathe: { colorLabels: ['Glow'] },
     text: { colorLabels: ['Text'] },
