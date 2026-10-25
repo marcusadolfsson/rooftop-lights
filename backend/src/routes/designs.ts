@@ -281,13 +281,14 @@ router.get('/effects/types', (req: Request, res: Response) => {
     },
     {
       type: 'comet',
-      name: 'Comet Wave',
+      name: 'Comet',
       description: 'A bright comet head with fading tail sweeping back and forth',
       defaultColors: [
         { r: 0, g: 0, b: 0, w: 255 },
         { r: 0, g: 0, b: 200, w: 0 },
       ],
       params: {
+        size: { type: 'number', default: 1, min: 1, max: 10, label: 'Size' },
         tailLength: { type: 'number', default: 8, min: 2, max: 20 },
         reverse: { type: 'boolean', default: false },
         bounce: { type: 'boolean', default: true },
@@ -350,7 +351,8 @@ router.get('/effects/types', (req: Request, res: Response) => {
         { r: 0, g: 0, b: 0, w: 255 },
       ],
       params: {
-        groupSize: { type: 'number', default: 3, min: 1, max: 10 },
+        groupSize: { type: 'number', default: 3, min: 1, max: 10, label: 'Size' },
+        tail: { type: 'number', default: 0, min: 0, max: 10, label: 'Comet tail' },
         bounce: { type: 'boolean', default: false, label: 'Move back out after meeting' },
         hold: { type: 'number', default: 0, min: 0, max: 10, step: 0.5, label: 'Hold when they meet', unit: ' s' },
         pause: { type: 'number', default: 0, min: 0, max: 30, step: 0.5, label: 'Pause before looping', unit: ' s' },

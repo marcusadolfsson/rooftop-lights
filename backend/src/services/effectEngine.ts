@@ -388,6 +388,8 @@ export class EffectEngine {
     const bounce = bool(effect.params?.bounce, true);
     // Let the head travel past the edge until the whole tail has left the frame before looping/turning
     const tailExit = bool(effect.params?.tailExit, true);
+    // Leading edge: this many lights at full head color in front of the fading tail
+    const size = Math.round(num(effect.params?.size, 1, 1, 100));
     const step = Math.floor(frameNum / 4);
     const pause = pauseSteps(effect, 4);
 
@@ -404,7 +406,7 @@ export class EffectEngine {
         const range = axisRange(row.length, dir);
         const totalWidth = Math.round(range.max - range.min) + 1;
         // Head steps per pass; with tailExit the head runs tailLength past the edge so the tail fully clears
-        const span = totalWidth + (tailExit ? tailLength : 0);
+        const span = totalWidth + (tailExit ? tailLength + size - 1 : 0);
 
         let pos: number;
         let movingForward: boolean;
@@ -435,8 +437,10 @@ export class EffectEngine {
         const headU = range.min + pos;
         for (let j = 0; j < row.length; j++) {
           const u = j * dir.cos + y * dir.sin;
-          const t = Math.round(movingForward ? headU - u : u - headU);
-          if (t >= 0 && t < tailLength) {
+          const d = Math.round(movingForward ? headU - u : u - headU);
+          // Inside the leading edge everything is full head color; the tail fades behind it
+          const t = d < size ? 0 : d - (size - 1);
+          if (d >= 0 && t < tailLength) {
             const brightness = 1 - (t / tailLength);
             const colorRatio = t / tailLength;
             const light = row[j];
@@ -621,6 +625,7 @@ export class EffectEngine {
     const rightColor: RGBW = effect.colors[1] || leftColor;
     const meetColor: RGBW | undefined = effect.colors[2];
     const groupSize = Math.round(num(effect.params?.groupSize || 3, 3, 1, 1000));
+    const tail = Math.round(num(effect.params?.tail, 0, 0, 100));
     const bounce = bool(effect.params?.bounce, false);
     const hold = Math.round(num(effect.params?.hold, 0, 0, 600) * FPS * effect.speed / 4);
     const step = Math.floor(frameNum / 4);
@@ -645,8 +650,20 @@ export class EffectEngine {
         else if (local < travel + hold) head = travel - 1;
         else head = travel - 2 - (local - travel - hold);
         const met = local >= travel - 1 && local < travel + hold;
+        const inward = local < travel + hold;
 
-        for (let g = 0; g < Math.min(groupSize, len); g++) {
+        // Comet tail behind each group: toward the ends on the way in, toward the middle on the way out
+        const size = Math.min(groupSize, len);
+        for (let k = 0; k < tail; k++) {
+          const i = inward ? head - size - k : head + 1 + k;
+          if (i < 0 || i >= len) continue;
+          const fade = 1 - (k + 1) / (tail + 1);
+          const dim = (c: RGBW): RGBW => ({ r: Math.round(c.r * fade), g: Math.round(c.g * fade), b: Math.round(c.b * fade), w: Math.round(c.w * fade) });
+          if (row[i]) frame.set(row[i].light_id, dim(leftColor));
+          if (row[len - 1 - i]) frame.set(row[len - 1 - i].light_id, dim(rightColor));
+        }
+
+        for (let g = 0; g < size; g++) {
           const i = head - g;
           if (i < 0) break;
           const fromLeft = row[i];
