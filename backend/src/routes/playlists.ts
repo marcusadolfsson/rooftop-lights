@@ -12,6 +12,11 @@ import {
 const router = Router();
 
 const PLAY_MODES = ['sequence', 'random'];
+// A scene is a short piece made of designs only, always played in sequence; a playlist can hold
+// designs, scenes and other playlists. Both are rows of the playlists table.
+const KINDS = ['playlist', 'scene'];
+type Kind = 'playlist' | 'scene';
+const SCENE_ITEMS_ERROR = 'A scene can only contain designs, not scenes or playlists';
 const REPEAT_MODES = ['seconds', 'times'];
 const MAX_DURATION_SECONDS = 7 * 24 * 3600;
 const MAX_REPEAT_COUNT = 1000;
@@ -36,6 +41,26 @@ interface ItemFields {
   transition: string;
 }
 
+function kindOf(id: string): Kind | undefined {
+  const row = getDatabase().prepare('SELECT kind FROM playlists WHERE id = ?').get(id) as { kind: Kind } | undefined;
+  return row?.kind;
+}
+
+function validateKind(kind: unknown): string | null {
+  return typeof kind === 'string' && KINDS.includes(kind) ? null : 'kind must be "playlist" or "scene"';
+}
+
+/** Why playlist `id` can't become a scene (it holds scenes or playlists), or null when it can. */
+function sceneConvertError(id: string): string | null {
+  const nested = getDatabase().prepare(`
+    SELECT cp.name, cp.kind FROM playlist_items pi JOIN playlists cp ON pi.child_playlist_id = cp.id
+    WHERE pi.playlist_id = ? ORDER BY pi.position
+  `).all(id) as { name: string; kind: Kind }[];
+  if (nested.length === 0) return null;
+  const list = nested.map(n => `${n.kind} "${n.name}"`).join(', ');
+  return `Can't convert to a scene: this playlist contains ${list}. ${SCENE_ITEMS_ERROR}; remove ${nested.length === 1 ? 'it' : 'them'} first.`;
+}
+
 function childPlaylistIds(id: string): string[] {
   const rows = getDatabase()
     .prepare('SELECT child_playlist_id FROM playlist_items WHERE playlist_id = ? AND child_playlist_id IS NOT NULL')
@@ -46,9 +71,10 @@ function childPlaylistIds(id: string): string[] {
 /**
  * Validate one item and fill in defaults. Older clients send only design_id + duration, which
  * still means "this design for duration seconds". `parentId` is the playlist the item goes into
- * (null for a playlist being created, which nothing can contain yet).
+ * (null for a playlist being created, which nothing can contain yet); `parentKind` is its kind
+ * (scenes take designs only).
  */
-function parseItem(raw: unknown, where: string, parentId: string | null): { item: ItemFields } | { error: string } {
+function parseItem(raw: unknown, where: string, parentId: string | null, parentKind: Kind = 'playlist'): { item: ItemFields } | { error: string } {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { error: `${where} must be an object` };
   const item = raw as Record<string, unknown>;
   const db = getDatabase();
@@ -62,6 +88,7 @@ function parseItem(raw: unknown, where: string, parentId: string | null): { item
     return { error: `${where}: design_id does not refer to an existing design` };
   }
   if (childId !== null) {
+    if (parentKind === 'scene') return { error: `${where}: ${SCENE_ITEMS_ERROR}` };
     if (typeof childId !== 'string' || !db.prepare('SELECT 1 FROM playlists WHERE id = ?').get(childId)) {
       return { error: `${where}: child_playlist_id does not refer to an existing playlist` };
     }
@@ -100,11 +127,11 @@ function parseItem(raw: unknown, where: string, parentId: string | null): { item
 }
 
 /** Validate an items array for create/replace. Returns the parsed items or an error message. */
-function parseItems(items: unknown, parentId: string | null): { items: ItemFields[] } | { error: string } {
+function parseItems(items: unknown, parentId: string | null, parentKind: Kind): { items: ItemFields[] } | { error: string } {
   if (!Array.isArray(items)) return { error: 'items must be an array' };
   const out: ItemFields[] = [];
   for (let i = 0; i < items.length; i++) {
-    const parsed = parseItem(items[i], `items[${i}]`, parentId);
+    const parsed = parseItem(items[i], `items[${i}]`, parentId, parentKind);
     if ('error' in parsed) return parsed;
     out.push(parsed.item);
   }
@@ -155,7 +182,7 @@ const seconds = (frames: number) => Math.round((frames / TIMELINE_FPS) * 100) / 
  */
 function withItems(playlist: any, src: TimelineSource) {
   const items = getDatabase().prepare(`
-    SELECT pi.*, d.name as design_name, d.type as design_type, cp.name as child_playlist_name
+    SELECT pi.*, d.name as design_name, d.type as design_type, cp.name as child_playlist_name, cp.kind as child_playlist_kind
     FROM playlist_items pi
     LEFT JOIN designs d ON pi.design_id = d.id
     LEFT JOIN playlists cp ON pi.child_playlist_id = cp.id
@@ -173,11 +200,18 @@ function withItems(playlist: any, src: TimelineSource) {
   };
 }
 
-// Get all playlists
+// Get all playlists and scenes, or only one kind (?kind=scene|playlist)
 router.get('/', (req: Request, res: Response) => {
   const db = getDatabase();
+  const { kind } = req.query;
 
-  const playlists = db.prepare('SELECT * FROM playlists ORDER BY name').all();
+  if (kind !== undefined && validateKind(kind)) {
+    res.status(400).json({ error: validateKind(kind) });
+    return;
+  }
+  const playlists = kind === undefined
+    ? db.prepare('SELECT * FROM playlists ORDER BY name').all()
+    : db.prepare('SELECT * FROM playlists WHERE kind = ? ORDER BY name').all(kind);
   const src = dbTimelineSource();
   res.json(playlists.map((playlist) => withItems(playlist, src)));
 });
@@ -200,17 +234,24 @@ router.get('/:id', (req: Request, res: Response) => {
 // Create a new playlist
 router.post('/', (req: Request, res: Response) => {
   const db = getDatabase();
-  const { name, play_mode = 'sequence', items = [] } = req.body ?? {};
+  const { name, play_mode: requestedMode = 'sequence', kind = 'playlist', items = [] } = req.body ?? {};
 
   if (typeof name !== 'string' || !name.trim()) {
     res.status(400).json({ error: 'Playlist "name" is required' });
     return;
   }
-  if (!PLAY_MODES.includes(play_mode)) {
+  const kindError = validateKind(kind);
+  if (kindError) {
+    res.status(400).json({ error: kindError });
+    return;
+  }
+  if (!PLAY_MODES.includes(requestedMode)) {
     res.status(400).json({ error: 'play_mode must be "sequence" or "random"' });
     return;
   }
-  const parsed = parseItems(items, null);
+  // Scenes always play in order
+  const play_mode = kind === 'scene' ? 'sequence' : requestedMode;
+  const parsed = parseItems(items, null, kind);
   if ('error' in parsed) {
     res.status(400).json({ error: parsed.error });
     return;
@@ -219,29 +260,29 @@ router.post('/', (req: Request, res: Response) => {
   const id = uuidv4();
 
   const insertPlaylist = db.prepare(`
-    INSERT INTO playlists (id, name, play_mode, created_at, updated_at)
-    VALUES (?, ?, ?, datetime('now'), datetime('now'))
+    INSERT INTO playlists (id, name, play_mode, kind, created_at, updated_at)
+    VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))
   `);
   const insertItem = db.prepare(INSERT_ITEM_SQL);
 
   db.transaction(() => {
-    insertPlaylist.run(id, name, play_mode);
+    insertPlaylist.run(id, name, play_mode, kind);
     parsed.items.forEach((item, index) => {
       insertItem.run(...insertItemArgs(uuidv4(), id, item, index));
     });
   })();
 
   invalidateSchedule();
-  res.json({ id, name, play_mode, items: parsed.items });
+  res.json({ id, name, play_mode, kind, items: parsed.items });
 });
 
 // Update a playlist
 router.put('/:id', (req: Request, res: Response) => {
   const db = getDatabase();
   const { id } = req.params;
-  const { name, play_mode, items } = req.body ?? {};
+  const { name, play_mode: requestedMode, kind: requestedKind, items } = req.body ?? {};
 
-  const existing = db.prepare('SELECT id FROM playlists WHERE id = ?').get(id);
+  const existing = db.prepare('SELECT id, kind FROM playlists WHERE id = ?').get(id) as { id: string; kind: Kind } | undefined;
   if (!existing) {
     res.status(404).json({ error: 'Playlist not found' });
     return;
@@ -250,22 +291,36 @@ router.put('/:id', (req: Request, res: Response) => {
     res.status(400).json({ error: 'Playlist "name" is required' });
     return;
   }
-  if (!PLAY_MODES.includes(play_mode)) {
+  // Clients that don't send kind keep the current one
+  const kind: Kind = requestedKind ?? existing.kind;
+  const kindError = validateKind(kind);
+  if (kindError) {
+    res.status(400).json({ error: kindError });
+    return;
+  }
+  if (!PLAY_MODES.includes(requestedMode)) {
     res.status(400).json({ error: 'play_mode must be "sequence" or "random"' });
     return;
   }
+  const play_mode = kind === 'scene' ? 'sequence' : requestedMode;
   let parsedItems: ItemFields[] | null = null;
   if (items) {
-    const parsed = parseItems(items, id);
+    const parsed = parseItems(items, id, kind);
     if ('error' in parsed) {
       res.status(400).json({ error: parsed.error });
       return;
     }
     parsedItems = parsed.items;
+  } else if (kind === 'scene' && existing.kind !== 'scene') {
+    const error = sceneConvertError(id);
+    if (error) {
+      res.status(400).json({ error });
+      return;
+    }
   }
 
   const updatePlaylist = db.prepare(`
-    UPDATE playlists SET name = ?, play_mode = ?, updated_at = datetime('now')
+    UPDATE playlists SET name = ?, play_mode = ?, kind = ?, updated_at = datetime('now')
     WHERE id = ?
   `);
   const deleteItems = db.prepare('DELETE FROM playlist_items WHERE playlist_id = ?');
@@ -273,7 +328,7 @@ router.put('/:id', (req: Request, res: Response) => {
 
   // All-or-nothing: a failure part-way must not leave the playlist half-replaced
   db.transaction(() => {
-    updatePlaylist.run(name, play_mode, id);
+    updatePlaylist.run(name, play_mode, kind, id);
     if (parsedItems) {
       deleteItems.run(id);
       parsedItems.forEach((item, index) => {
@@ -284,6 +339,43 @@ router.put('/:id', (req: Request, res: Response) => {
 
   invalidateSchedule();
   res.json({ success: true });
+});
+
+// Convert a playlist to a scene or back. Items stay as they are; a playlist can only become a
+// scene when it holds designs only, and a scene always plays in sequence
+router.post('/:id/convert', (req: Request, res: Response) => {
+  const db = getDatabase();
+  const { id } = req.params;
+  const { kind } = req.body ?? {};
+
+  const existing = db.prepare('SELECT id, kind FROM playlists WHERE id = ?').get(id) as { id: string; kind: Kind } | undefined;
+  if (!existing) {
+    res.status(404).json({ error: 'Playlist not found' });
+    return;
+  }
+  const kindError = validateKind(kind);
+  if (kindError) {
+    res.status(400).json({ error: kindError });
+    return;
+  }
+  if (kind === 'scene') {
+    const error = sceneConvertError(id);
+    if (error) {
+      res.status(400).json({ error });
+      return;
+    }
+  }
+
+  if (kind !== existing.kind) {
+    db.prepare(`
+      UPDATE playlists SET kind = ?, play_mode = CASE WHEN ? = 'scene' THEN 'sequence' ELSE play_mode END, updated_at = datetime('now')
+      WHERE id = ?
+    `).run(kind, kind, id);
+    invalidateSchedule();
+  }
+
+  const playlist = db.prepare('SELECT * FROM playlists WHERE id = ?').get(id);
+  res.json(withItems(playlist, dbTimelineSource()));
 });
 
 // Delete a playlist
@@ -331,11 +423,12 @@ router.post('/:id/items', (req: Request, res: Response) => {
   const { position } = req.body ?? {};
   const itemId = uuidv4();
 
-  if (!db.prepare('SELECT 1 FROM playlists WHERE id = ?').get(id)) {
+  const parentKind = kindOf(id);
+  if (!parentKind) {
     res.status(404).json({ error: 'Playlist not found' });
     return;
   }
-  const parsed = parseItem(req.body ?? {}, 'item', id);
+  const parsed = parseItem(req.body ?? {}, 'item', id, parentKind);
   if ('error' in parsed) {
     res.status(400).json({ error: parsed.error });
     return;

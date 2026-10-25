@@ -155,10 +155,19 @@ function initializeTables(): void {
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
       play_mode TEXT DEFAULT 'sequence',
+      kind TEXT NOT NULL DEFAULT 'playlist' CHECK (kind IN ('playlist', 'scene')),
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT DEFAULT CURRENT_TIMESTAMP
     )
   `);
+
+  // Migration: scenes. A scene is a playlist row with kind = 'scene' (designs only, always in
+  // sequence); every playlist that existed before stays a playlist
+  const playlistColumns = database.prepare("PRAGMA table_info(playlists)").all() as { name: string }[];
+  if (!playlistColumns.some(col => col.name === 'kind')) {
+    database.exec("ALTER TABLE playlists ADD COLUMN kind TEXT NOT NULL DEFAULT 'playlist' CHECK (kind IN ('playlist', 'scene'))");
+    console.log('Migrated playlists: added kind (existing rows are playlists)');
+  }
 
   // Playlist items: each plays a design or another playlist (child_playlist_id), for `duration`
   // seconds or `repeat_count` times through

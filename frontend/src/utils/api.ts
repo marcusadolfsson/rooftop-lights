@@ -5,6 +5,7 @@ import type {
   Design,
   Playlist,
   PlaylistItemInput,
+  PlaylistKind,
   Schedule,
   ArtNetConfig,
   LayoutData,
@@ -134,20 +135,28 @@ export const designsAPI = {
 
 // Playlists API
 export const playlistsAPI = {
-  getAll: () => fetchJSON<Playlist[]>('/playlists'),
+  // Playlists and scenes; pass a kind for only one of them
+  getAll: (kind?: PlaylistKind) => fetchJSON<Playlist[]>(kind ? `/playlists?kind=${kind}` : '/playlists'),
 
   get: (id: string) => fetchJSON<Playlist>(`/playlists/${id}`),
 
-  create: (data: { name: string; play_mode?: string; items?: PlaylistItemInput[] }) =>
+  create: (data: { name: string; play_mode?: string; kind?: PlaylistKind; items?: PlaylistItemInput[] }) =>
     fetchJSON<Playlist>('/playlists', {
       method: 'POST',
       body: JSON.stringify(data),
     }),
 
-  update: (id: string, data: { name: string; play_mode: string; items?: PlaylistItemInput[] }) =>
+  update: (id: string, data: { name: string; play_mode: string; kind?: PlaylistKind; items?: PlaylistItemInput[] }) =>
     fetchJSON<{ success: boolean }>(`/playlists/${id}`, {
       method: 'PUT',
       body: JSON.stringify(data),
+    }),
+
+  // Items stay; a playlist can only become a scene when it holds designs only
+  convert: (id: string, kind: PlaylistKind) =>
+    fetchJSON<Playlist>(`/playlists/${id}/convert`, {
+      method: 'POST',
+      body: JSON.stringify({ kind }),
     }),
 
   delete: (id: string) =>

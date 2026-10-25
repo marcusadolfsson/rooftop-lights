@@ -10,7 +10,7 @@ const DESIGN_TYPES = ['static', 'motion', 'playlist'];
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 
-/** Validate the design/playlist reference of a schedule. Returns an error message or null. */
+/** Validate the design/playlist reference of a schedule (a scene is a playlist id). Returns an error message or null. */
 function validateTarget(design_type: unknown, design_id: unknown, playlist_id: unknown): string | null {
   const db = getDatabase();
   if (typeof design_type !== 'string' || !DESIGN_TYPES.includes(design_type)) {
@@ -18,7 +18,7 @@ function validateTarget(design_type: unknown, design_id: unknown, playlist_id: u
   }
   if (design_type === 'playlist') {
     if (typeof playlist_id !== 'string' || !db.prepare('SELECT 1 FROM playlists WHERE id = ?').get(playlist_id)) {
-      return 'playlist_id does not refer to an existing playlist';
+      return 'playlist_id does not refer to an existing playlist or scene';
     }
   } else if (typeof design_id !== 'string' || !db.prepare('SELECT 1 FROM designs WHERE id = ?').get(design_id)) {
     return 'design_id does not refer to an existing design';
@@ -41,7 +41,8 @@ router.get('/', (req: Request, res: Response) => {
   const schedules = db.prepare(`
     SELECT s.*,
            d.name as design_name,
-           p.name as playlist_name
+           p.name as playlist_name,
+           p.kind as playlist_kind
     FROM schedules s
     LEFT JOIN designs d ON s.design_id = d.id
     LEFT JOIN playlists p ON s.playlist_id = p.id
@@ -58,7 +59,8 @@ router.get('/default', (req: Request, res: Response) => {
   const schedule = db.prepare(`
     SELECT s.*,
            d.name as design_name,
-           p.name as playlist_name
+           p.name as playlist_name,
+           p.kind as playlist_kind
     FROM schedules s
     LEFT JOIN designs d ON s.design_id = d.id
     LEFT JOIN playlists p ON s.playlist_id = p.id

@@ -1,7 +1,7 @@
 import { useEffect, useState, type DragEvent } from 'react';
 import { designsAPI, playlistsAPI } from '../../utils/api';
 import type { PreviewControls } from '../../hooks/usePreview';
-import type { Design, EffectType, MotionDesignData, Playlist, PlaylistItemInput, RepeatMode, RGBW, StaticDesignData, Wall } from '../../types';
+import type { Design, EffectType, MotionDesignData, Playlist, PlaylistItemInput, PlaylistKind, RepeatMode, RGBW, StaticDesignData, Wall } from '../../types';
 import type { ColorTool } from './ColorPicker';
 
 export interface EditorDeps {
@@ -373,8 +373,13 @@ export function useMotionEditor({ preview, reload, setError, autoPreview, effect
 export type MotionEditor = ReturnType<typeof useMotionEditor>;
 
 // ---------------------------------------------------------------------------
-// Playlists
+// Playlists and scenes
 // ---------------------------------------------------------------------------
+
+// Scenes and playlists share one editor. A scene holds designs only and always plays in order;
+// a playlist can also hold scenes and other playlists.
+export const playlistKind = (p: Pick<Playlist, 'kind'>): PlaylistKind => p.kind ?? 'playlist';
+export const KIND_LABEL: Record<PlaylistKind, string> = { playlist: 'Playlist', scene: 'Scene' };
 
 export interface EditingPlaylistItem {
   key: string; // stable client-side identity (for React keys during drag reorder)
@@ -422,7 +427,14 @@ function containsPlaylist(playlists: Playlist[], childId: string, parentId: stri
   return false;
 }
 
-export function usePlaylistEditor({ reload, setError, designs, playlists }: Omit<EditorDeps, 'preview' | 'autoPreview'> & { designs: Design[]; playlists: Playlist[] }) {
+/**
+ * Editor for one kind. `playlists` is every playlist and scene (nested lengths and loop checks
+ * need them all); the editor's own saved list is `saved`.
+ */
+export function usePlaylistEditor({ reload, setError, designs, playlists, kind }: Omit<EditorDeps, 'preview' | 'autoPreview'> & { designs: Design[]; playlists: Playlist[]; kind: PlaylistKind }) {
+  const isScene = kind === 'scene';
+  const noun = isScene ? 'scene' : 'playlist';
+  const saved = playlists.filter((p) => playlistKind(p) === kind);
   const [selectedPlaylist, setSelectedPlaylist] = useState<Playlist | null>(null);
   const [name, setName] = useState('');
   const [items, setItems] = useState<EditingPlaylistItem[]>([]);
@@ -449,13 +461,21 @@ export function usePlaylistEditor({ reload, setError, designs, playlists }: Omit
       repeat_count: i.repeat_count || 1,
       transition: i.transition || 'cut',
     })));
-    setMode(playlist.play_mode);
+    setMode(isScene ? 'sequence' : playlist.play_mode);
     setName(playlist.name);
   };
 
+  const designCycle = (designId: string | null): number | null => {
+    const design = designs.find((d) => d.id === designId);
+    return design?.type === 'motion' && design.cycleSeconds ? design.cycleSeconds : null;
+  };
+
+  // In a scene a design plays one complete cycle when it has one; otherwise (and in playlists)
+  // it plays for 10 seconds
   const addDesign = (designId: string) => {
     const design = designs.find((d) => d.id === designId);
     if (!design) return;
+    const once = isScene && designCycle(designId) !== null;
     setItems((prev) => [...prev, {
       key: newItemKey(),
       design_id: designId,
@@ -463,13 +483,13 @@ export function usePlaylistEditor({ reload, setError, designs, playlists }: Omit
       name: design.name,
       design_type: design.type,
       duration: 10,
-      repeat_mode: 'seconds',
+      repeat_mode: once ? 'times' : 'seconds',
       repeat_count: 1,
       transition: 'cut',
     }]);
   };
 
-  // Nested playlists default to playing through once
+  // Nested playlists and scenes default to playing through once
   const addPlaylist = (playlistId: string) => {
     const playlist = playlists.find((p) => p.id === playlistId);
     if (!playlist || !canAddPlaylist(playlistId)) return;
@@ -485,9 +505,12 @@ export function usePlaylistEditor({ reload, setError, designs, playlists }: Omit
     }]);
   };
 
-  /** Saved playlists that can go into this one: not itself, and none that already contain it. */
+  /**
+   * Saved playlists and scenes that can go into this one: not itself, and none that already
+   * contain it. Scenes take designs only.
+   */
   const canAddPlaylist = (playlistId: string) =>
-    !selectedPlaylist || !containsPlaylist(playlists, playlistId, selectedPlaylist.id);
+    !isScene && (!selectedPlaylist || !containsPlaylist(playlists, playlistId, selectedPlaylist.id));
   const addablePlaylists = playlists.filter((p) => canAddPlaylist(p.id));
 
   /**
@@ -499,8 +522,7 @@ export function usePlaylistEditor({ reload, setError, designs, playlists }: Omit
       const total = playlists.find((p) => p.id === item.child_playlist_id)?.totalSeconds;
       return total && total > 0 ? total : null;
     }
-    const design = designs.find((d) => d.id === item.design_id);
-    return design?.type === 'motion' && design.cycleSeconds ? design.cycleSeconds : null;
+    return designCycle(item.design_id);
   };
   // Times mode only counts when there's a cycle to count; otherwise the item plays its seconds
   const effectiveMode = (item: EditingPlaylistItem): RepeatMode =>
@@ -526,39 +548,40 @@ export function usePlaylistEditor({ reload, setError, designs, playlists }: Omit
     transition: i.transition,
   }));
 
-  /** Saves; returns 'needs-name' for a new playlist without a name. */
+  /** Saves; returns 'needs-name' for a new playlist/scene without a name. */
   const save = async (nameOverride?: string): Promise<'saved' | 'needs-name' | 'failed'> => {
     if (items.length === 0) return 'failed';
     try {
       if (selectedPlaylist) {
         await playlistsAPI.update(selectedPlaylist.id, {
           name: name || selectedPlaylist.name,
-          play_mode: mode,
+          play_mode: isScene ? 'sequence' : mode,
+          kind,
           items: payloadItems(),
         });
       } else {
         const newName = nameOverride?.trim();
         if (!newName) return 'needs-name';
-        const created = await playlistsAPI.create({ name: newName, play_mode: mode, items: payloadItems() });
+        const created = await playlistsAPI.create({ name: newName, play_mode: isScene ? 'sequence' : mode, kind, items: payloadItems() });
         setSelectedPlaylist(created);
         setName(newName);
       }
       await reload();
       return 'saved';
     } catch (err) {
-      setError(errorMessage(err, 'Failed to save playlist'));
+      setError(errorMessage(err, `Failed to save ${noun}`));
       return 'failed';
     }
   };
 
   const remove = async (playlistId: string) => {
-    if (!confirm('Are you sure you want to delete this playlist?')) return;
+    if (!confirm(`Are you sure you want to delete this ${noun}?`)) return;
     try {
       await playlistsAPI.delete(playlistId);
       if (selectedPlaylist?.id === playlistId) startNew();
       await reload();
     } catch (err) {
-      setError(errorMessage(err, 'Failed to delete playlist'));
+      setError(errorMessage(err, `Failed to delete ${noun}`));
     }
   };
 
@@ -573,7 +596,7 @@ export function usePlaylistEditor({ reload, setError, designs, playlists }: Omit
       }
       await reload();
     } catch (err) {
-      setError(errorMessage(err, 'Failed to rename playlist'));
+      setError(errorMessage(err, `Failed to rename ${noun}`));
     }
   };
 
@@ -608,6 +631,7 @@ export function usePlaylistEditor({ reload, setError, designs, playlists }: Omit
   };
 
   return {
+    kind, isScene, noun, saved,
     selectedPlaylist, name, setName, items, mode, setMode, dragKey,
     addablePlaylists, cycleSeconds, effectiveMode, itemSeconds, totalSeconds,
     startNew, load, addDesign, addPlaylist, removeItem, updateItem, save, remove, rename, dragStart, dragOver, dragEnd, moveItem,

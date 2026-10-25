@@ -8,13 +8,14 @@ import MotionPanel from './design/MotionPanel';
 import PlaylistPanel from './design/PlaylistPanel';
 import { AiPromptModal, NameModal } from './design/Modals';
 import { useMotionEditor, usePlaylistEditor, useStaticEditor } from './design/editors';
-import type { Design, EffectType, Playlist, RGBW, LayoutData } from '../types';
+import type { Design, EffectType, Playlist, PlaylistKind, RGBW, LayoutData } from '../types';
 
-type TabType = 'static' | 'motion' | 'playlist';
+type TabType = 'static' | 'motion' | 'scenes' | 'playlist';
 
 const TABS: { id: TabType; label: string }[] = [
   { id: 'static', label: 'Static' },
   { id: 'motion', label: 'Motion' },
+  { id: 'scenes', label: 'Scenes' },
   { id: 'playlist', label: 'Playlist' },
 ];
 
@@ -58,7 +59,8 @@ function DesignPage() {
 
   // Modals
   const [saveModal, setSaveModal] = useState<{ initialName: string } | null>(null);
-  const [showPlaylistSaveModal, setShowPlaylistSaveModal] = useState(false);
+  // Name prompt for a new scene / playlist
+  const [playlistSaveModal, setPlaylistSaveModal] = useState<PlaylistKind | null>(null);
   const [pendingSaveName, setPendingSaveName] = useState(''); // prefilled from AI-generated names
 
   // AI Designer
@@ -103,7 +105,9 @@ function DesignPage() {
   const editorDeps = { preview, reload: loadData, setError };
   const staticEditor = useStaticEditor({ ...editorDeps, autoPreview: isVisible && activeTab === 'static' });
   const motionEditor = useMotionEditor({ ...editorDeps, autoPreview: isVisible && activeTab === 'motion', effectTypes });
-  const playlistEditor = usePlaylistEditor({ reload: loadData, setError, designs, playlists });
+  const sceneEditor = usePlaylistEditor({ reload: loadData, setError, designs, playlists, kind: 'scene' });
+  const playlistEditor = usePlaylistEditor({ reload: loadData, setError, designs, playlists, kind: 'playlist' });
+  const editorFor = (kind: PlaylistKind) => (kind === 'scene' ? sceneEditor : playlistEditor);
 
   // Derive whether any light uses RGBW
   const hasRGBW = layout?.walls.some(w => w.lights?.some(l => l.light_type === 'RGBW') || w.matrix?.some(row => row?.some(l => l?.light_type === 'RGBW'))) ?? true;
@@ -176,10 +180,25 @@ function DesignPage() {
     }
   };
 
-  const handleSavePlaylist = async (name?: string) => {
-    const result = await playlistEditor.save(name);
-    if (result === 'needs-name') setShowPlaylistSaveModal(true);
-    if (result === 'saved') setShowPlaylistSaveModal(false);
+  const handleSavePlaylist = async (kind: PlaylistKind, name?: string) => {
+    const result = await editorFor(kind).save(name);
+    if (result === 'needs-name') setPlaylistSaveModal(kind);
+    if (result === 'saved') setPlaylistSaveModal(null);
+  };
+
+  // Converting keeps the items; the result opens in its new tab
+  const handleConvert = async (id: string, to: PlaylistKind) => {
+    const from = editorFor(to === 'scene' ? 'playlist' : 'scene');
+    try {
+      const converted = await playlistsAPI.convert(id, to);
+      if (from.selectedPlaylist?.id === id) from.startNew();
+      await loadData();
+      editorFor(to).load(converted);
+      setActiveTab(to === 'scene' ? 'scenes' : 'playlist');
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : `Failed to convert to ${to}`);
+    }
   };
 
   // --- live preview ---
@@ -190,8 +209,9 @@ function DesignPage() {
       const { effect, colors, params, speed, scope } = motionEditor;
       return { kind: 'effect', effectType: effect.type, colors, params, speed, scope };
     }
-    if (activeTab === 'playlist' && playlistEditor.selectedPlaylist) {
-      return { kind: 'playlist', playlistId: playlistEditor.selectedPlaylist.id };
+    const listEditor = activeTab === 'scenes' ? sceneEditor : activeTab === 'playlist' ? playlistEditor : null;
+    if (listEditor?.selectedPlaylist) {
+      return { kind: 'playlist', playlistId: listEditor.selectedPlaylist.id };
     }
     return null;
   };
@@ -320,7 +340,7 @@ function DesignPage() {
           </button>
         ))}
       </div>
-      {aiEnabled && activeTab !== 'playlist' && (
+      {aiEnabled && (activeTab === 'static' || activeTab === 'motion') && (
         <button className={`btn btn-sm ${showAiPanel ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setShowAiPanel(!showAiPanel)} style={{ width: '100%' }}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 16.8l-6.2 4.5 2.4-7.4L2 9.4h7.6z"/></svg>
           AI Designer
@@ -482,13 +502,16 @@ function DesignPage() {
         />
       )}
 
-      {activeTab === 'playlist' && (
+      {(activeTab === 'scenes' || activeTab === 'playlist') && (
         <PlaylistPanel
-          editor={playlistEditor}
+          // Separate instances so per-panel state (focus, collapsed list) doesn't carry over
+          key={activeTab}
+          editor={activeTab === 'scenes' ? sceneEditor : playlistEditor}
           designs={designs}
           playlists={playlists}
           sidebarHeader={sidebarHeader}
-          onSave={() => handleSavePlaylist()}
+          onSave={() => handleSavePlaylist(activeTab === 'scenes' ? 'scene' : 'playlist')}
+          onConvert={handleConvert}
         />
       )}
 
@@ -503,13 +526,13 @@ function DesignPage() {
         />
       )}
 
-      {showPlaylistSaveModal && (
+      {playlistSaveModal && (
         <NameModal
-          title="Save Playlist"
-          label="Playlist Name"
-          placeholder="Enter playlist name"
-          onSave={(name) => handleSavePlaylist(name)}
-          onClose={() => setShowPlaylistSaveModal(false)}
+          title={playlistSaveModal === 'scene' ? 'Save Scene' : 'Save Playlist'}
+          label={playlistSaveModal === 'scene' ? 'Scene Name' : 'Playlist Name'}
+          placeholder={`Enter ${playlistSaveModal} name`}
+          onSave={(name) => handleSavePlaylist(playlistSaveModal, name)}
+          onClose={() => setPlaylistSaveModal(null)}
         />
       )}
     </div>

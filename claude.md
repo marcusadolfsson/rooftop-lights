@@ -114,8 +114,8 @@ designs (id, name, type, data, created_at, updated_at)
   -- type: 'static' | 'motion'
   -- data: JSON with colors array or effect parameters
 
--- Playlists of designs
-playlists (id, name, play_mode, created_at, updated_at)
+-- Playlists and scenes (kind 'scene' = designs only, always sequence; default 'playlist')
+playlists (id, name, play_mode, kind 'playlist'|'scene', created_at, updated_at)
 playlist_items (id, playlist_id, design_id | child_playlist_id, duration, position, transition, repeat_mode 'seconds'|'times', repeat_count)
 
 -- Schedule entries
@@ -150,8 +150,9 @@ schedules (id, design_id, playlist_id, design_type, is_default, start_date, end_
   ```
 
 ### Playlists
-- `GET /api/playlists` - List playlists
-- `POST /api/playlists` - Create playlist
+- `GET /api/playlists` - List playlists and scenes (`?kind=scene|playlist` filters; each row has `kind`)
+- `POST /api/playlists` - Create playlist (`kind` optional, default `playlist`)
+- `POST /api/playlists/:id/convert` - `{ kind }`: turn a playlist into a scene (designs only, else 400) or back
 - `POST /api/playlists/:id/items` - Add design to playlist
 - `DELETE /api/playlists/:id/items/:itemId` - Remove from playlist
 

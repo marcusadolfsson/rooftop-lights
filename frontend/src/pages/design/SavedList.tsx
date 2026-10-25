@@ -6,6 +6,8 @@ export interface SavedListItem {
   name: string;
   // Extra text after the name (e.g. "3 items")
   meta?: ReactNode;
+  // Extra row buttons, shown before rename/delete
+  actions?: ReactNode;
 }
 
 interface SavedListProps {
@@ -114,6 +116,7 @@ export default function SavedList({ title, items, selectedId, onSelect, onRename
                     )}
                   </td>
                   <td style={{ width: '1px', whiteSpace: 'nowrap' }}>
+                    {item.actions}
                     <button className="btn-icon" style={{ padding: '0.2rem' }} title="Rename" aria-label={`Rename ${item.name}`} onClick={(e) => { e.stopPropagation(); setRenamingId(item.id); setRenameValue(item.name); }}>
                       {EDIT_ICON}
                     </button>

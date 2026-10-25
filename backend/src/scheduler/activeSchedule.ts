@@ -22,6 +22,8 @@ export interface ScheduleRow {
   created_at?: string;
   design_name?: string | null;
   playlist_name?: string | null;
+  // 'scene' or 'playlist' when design_type is 'playlist'
+  playlist_kind?: string | null;
 }
 
 const pad = (n: number) => String(n).padStart(2, '0');
@@ -51,7 +53,7 @@ function statements(db: Database.Database): Statements {
   if (!s) {
     s = {
       dated: db.prepare(`
-        SELECT s.*, d.name AS design_name, p.name AS playlist_name
+        SELECT s.*, d.name AS design_name, p.name AS playlist_name, p.kind AS playlist_kind
         FROM schedules s
         LEFT JOIN designs d ON s.design_id = d.id
         LEFT JOIN playlists p ON s.playlist_id = p.id
@@ -62,7 +64,7 @@ function statements(db: Database.Database): Statements {
         LIMIT 1
       `),
       fallback: db.prepare(`
-        SELECT s.*, d.name AS design_name, p.name AS playlist_name
+        SELECT s.*, d.name AS design_name, p.name AS playlist_name, p.kind AS playlist_kind
         FROM schedules s
         LEFT JOIN designs d ON s.design_id = d.id
         LEFT JOIN playlists p ON s.playlist_id = p.id

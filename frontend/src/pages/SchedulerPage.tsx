@@ -7,6 +7,12 @@ import type { Design, Playlist, Schedule, LayoutData } from '../types';
 
 const ACTIVE_POLL_MS = 30000;
 
+// What a schedule plays, as the pickers offer it. A scene is stored like a playlist
+// (design_type 'playlist' + playlist_id); only its kind differs.
+type TargetType = 'static' | 'motion' | 'scene' | 'playlist';
+const TARGET_LABELS: Record<TargetType, string> = { static: 'Static Design', motion: 'Motion Effect', scene: 'Scene', playlist: 'Playlist' };
+const isListTarget = (t: TargetType) => t === 'scene' || t === 'playlist';
+
 // Parse "YYYY-MM-DD" as a local calendar date. new Date("YYYY-MM-DD") is UTC
 // midnight, which displays as the previous day in time zones west of UTC.
 function parseLocalDate(dateStr: string): Date | null {
@@ -35,7 +41,7 @@ function SchedulerPage() {
   const [editingSchedule, setEditingSchedule] = useState<Schedule | null>(null);
 
   // Form state
-  const [selectedType, setSelectedType] = useState<'static' | 'motion' | 'playlist'>('static');
+  const [selectedType, setSelectedType] = useState<TargetType>('static');
   const [selectedDesignId, setSelectedDesignId] = useState<string>('');
   const [selectedPlaylistId, setSelectedPlaylistId] = useState<string>('');
   const [startDate, setStartDate] = useState('');
@@ -118,10 +124,10 @@ function SchedulerPage() {
   const handleSetDefault = async () => {
     try {
       const data: { design_id?: string; playlist_id?: string; design_type: string } = {
-        design_type: selectedType,
+        design_type: isListTarget(selectedType) ? 'playlist' : selectedType,
       };
 
-      if (selectedType === 'playlist') {
+      if (isListTarget(selectedType)) {
         data.playlist_id = selectedPlaylistId;
       } else {
         data.design_id = selectedDesignId;
@@ -148,7 +154,7 @@ function SchedulerPage() {
         end_time: string;
         priority: number;
       } = {
-        design_type: selectedType,
+        design_type: isListTarget(selectedType) ? 'playlist' : selectedType as 'static' | 'motion',
         start_date: startDate,
         end_date: endDate,
         start_time: startTime,
@@ -156,7 +162,7 @@ function SchedulerPage() {
         priority,
       };
 
-      if (selectedType === 'playlist') {
+      if (isListTarget(selectedType)) {
         data.playlist_id = selectedPlaylistId;
       } else {
         data.design_id = selectedDesignId;
@@ -190,7 +196,7 @@ function SchedulerPage() {
 
   const openEditSchedule = (schedule: Schedule) => {
     setEditingSchedule(schedule);
-    setSelectedType(schedule.design_type);
+    setSelectedType(targetTypeOf(schedule));
     setSelectedDesignId(schedule.design_id || '');
     setSelectedPlaylistId(schedule.playlist_id || '');
     setStartDate(schedule.start_date || '');
@@ -220,12 +226,81 @@ function SchedulerPage() {
     return date;
   };
 
+  const targetTypeOf = (schedule: Schedule): TargetType => {
+    if (schedule.design_type !== 'playlist') return schedule.design_type;
+    const kind = schedule.playlist_kind ?? playlists.find((p) => p.id === schedule.playlist_id)?.kind;
+    return kind === 'scene' ? 'scene' : 'playlist';
+  };
+
   const getScheduleDisplayName = (schedule: Schedule): string => {
     if (schedule.design_type === 'playlist') {
-      return schedule.playlist_name || 'Unknown Playlist';
+      return schedule.playlist_name || `Unknown ${TARGET_LABELS[targetTypeOf(schedule)]}`;
     }
     return schedule.design_name || 'Unknown Design';
   };
+
+  const listOptions = playlists.filter((p) => (p.kind ?? 'playlist') === selectedType);
+
+  // Type + design/scene/playlist pickers, shared by both modals
+  const targetFields = (
+    <>
+      <div className="form-group">
+        <label className="form-label" htmlFor="schedule-target-type">Type</label>
+        <select
+          id="schedule-target-type"
+          className="form-select"
+          value={selectedType}
+          onChange={(e) => {
+            setSelectedType(e.target.value as TargetType);
+            setSelectedDesignId('');
+            setSelectedPlaylistId('');
+          }}
+        >
+          {(Object.keys(TARGET_LABELS) as TargetType[]).map((t) => (
+            <option key={t} value={t}>{TARGET_LABELS[t]}</option>
+          ))}
+        </select>
+      </div>
+
+      {isListTarget(selectedType) ? (
+        <div className="form-group">
+          <label className="form-label" htmlFor="schedule-target-list">{TARGET_LABELS[selectedType]}</label>
+          <select
+            id="schedule-target-list"
+            className="form-select"
+            value={selectedPlaylistId}
+            onChange={(e) => setSelectedPlaylistId(e.target.value)}
+          >
+            <option value="">Select a {selectedType}...</option>
+            {listOptions.map((playlist) => (
+              <option key={playlist.id} value={playlist.id}>
+                {playlist.name} ({playlist.items.length} items)
+              </option>
+            ))}
+          </select>
+        </div>
+      ) : (
+        <div className="form-group">
+          <label className="form-label" htmlFor="schedule-target-design">Design</label>
+          <select
+            id="schedule-target-design"
+            className="form-select"
+            value={selectedDesignId}
+            onChange={(e) => setSelectedDesignId(e.target.value)}
+          >
+            <option value="">Select a design...</option>
+            {designs
+              .filter((d) => d.type === selectedType)
+              .map((design) => (
+                <option key={design.id} value={design.id}>
+                  {design.name}
+                </option>
+              ))}
+          </select>
+        </div>
+      )}
+    </>
+  );
 
   const timeZoneHint = serverTimeZone ? `server time, ${serverTimeZone}` : 'server local time';
 
@@ -316,7 +391,7 @@ function SchedulerPage() {
             <div>
               <strong>{getScheduleDisplayName(activeSchedule)}</strong>
               <span style={{ color: 'var(--text-secondary)', marginLeft: '0.5rem' }}>
-                ({activeSchedule.design_type})
+                ({targetTypeOf(activeSchedule)})
               </span>
               {activeSchedule.is_default && (
                 <span
@@ -344,7 +419,7 @@ function SchedulerPage() {
           <h3 className="card-title">Default Schedule</h3>
           <button className="btn btn-secondary btn-sm" onClick={() => {
             if (defaultSchedule) {
-              setSelectedType(defaultSchedule.design_type);
+              setSelectedType(targetTypeOf(defaultSchedule));
               setSelectedDesignId(defaultSchedule.design_id || '');
               setSelectedPlaylistId(defaultSchedule.playlist_id || '');
             }
@@ -358,7 +433,7 @@ function SchedulerPage() {
           <div className="schedule-item default">
             <div className="schedule-item-info">
               <h4>{getScheduleDisplayName(defaultSchedule)}</h4>
-              <p>Type: {defaultSchedule.design_type}</p>
+              <p>Type: {targetTypeOf(defaultSchedule)}</p>
               <p>This is the fallback schedule when no date-specific schedules are active.</p>
             </div>
           </div>
@@ -389,7 +464,7 @@ function SchedulerPage() {
                     {formatDate(schedule.start_date, schedule.start_time)} - {formatDate(schedule.end_date, schedule.end_time)}
                     {schedule.priority > 0 && ` • Priority: ${schedule.priority}`}
                   </p>
-                  <p style={{ color: 'var(--text-secondary)' }}>Type: {schedule.design_type}</p>
+                  <p style={{ color: 'var(--text-secondary)' }}>Type: {targetTypeOf(schedule)}</p>
                 </div>
                 <div className="btn-group">
                   <button
@@ -422,58 +497,7 @@ function SchedulerPage() {
               </button>
             </div>
 
-            <div className="form-group">
-              <label className="form-label">Type</label>
-              <select
-                className="form-select"
-                value={selectedType}
-                onChange={(e) => {
-                  setSelectedType(e.target.value as 'static' | 'motion' | 'playlist');
-                  setSelectedDesignId('');
-                  setSelectedPlaylistId('');
-                }}
-              >
-                <option value="static">Static Design</option>
-                <option value="motion">Motion Effect</option>
-                <option value="playlist">Playlist</option>
-              </select>
-            </div>
-
-            {selectedType === 'playlist' ? (
-              <div className="form-group">
-                <label className="form-label">Playlist</label>
-                <select
-                  className="form-select"
-                  value={selectedPlaylistId}
-                  onChange={(e) => setSelectedPlaylistId(e.target.value)}
-                >
-                  <option value="">Select a playlist...</option>
-                  {playlists.map((playlist) => (
-                    <option key={playlist.id} value={playlist.id}>
-                      {playlist.name} ({playlist.items.length} items)
-                    </option>
-                  ))}
-                </select>
-              </div>
-            ) : (
-              <div className="form-group">
-                <label className="form-label">Design</label>
-                <select
-                  className="form-select"
-                  value={selectedDesignId}
-                  onChange={(e) => setSelectedDesignId(e.target.value)}
-                >
-                  <option value="">Select a design...</option>
-                  {designs
-                    .filter((d) => d.type === selectedType)
-                    .map((design) => (
-                      <option key={design.id} value={design.id}>
-                        {design.name}
-                      </option>
-                    ))}
-                </select>
-              </div>
-            )}
+            {targetFields}
 
             <div className="modal-footer">
               <button className="btn btn-secondary" onClick={() => setShowDefaultModal(false)}>
@@ -482,7 +506,7 @@ function SchedulerPage() {
               <button
                 className="btn btn-primary"
                 onClick={handleSetDefault}
-                disabled={selectedType === 'playlist' ? !selectedPlaylistId : !selectedDesignId}
+                disabled={isListTarget(selectedType) ? !selectedPlaylistId : !selectedDesignId}
               >
                 Set Default
               </button>
@@ -504,58 +528,7 @@ function SchedulerPage() {
               </button>
             </div>
 
-            <div className="form-group">
-              <label className="form-label">Type</label>
-              <select
-                className="form-select"
-                value={selectedType}
-                onChange={(e) => {
-                  setSelectedType(e.target.value as 'static' | 'motion' | 'playlist');
-                  setSelectedDesignId('');
-                  setSelectedPlaylistId('');
-                }}
-              >
-                <option value="static">Static Design</option>
-                <option value="motion">Motion Effect</option>
-                <option value="playlist">Playlist</option>
-              </select>
-            </div>
-
-            {selectedType === 'playlist' ? (
-              <div className="form-group">
-                <label className="form-label">Playlist</label>
-                <select
-                  className="form-select"
-                  value={selectedPlaylistId}
-                  onChange={(e) => setSelectedPlaylistId(e.target.value)}
-                >
-                  <option value="">Select a playlist...</option>
-                  {playlists.map((playlist) => (
-                    <option key={playlist.id} value={playlist.id}>
-                      {playlist.name} ({playlist.items.length} items)
-                    </option>
-                  ))}
-                </select>
-              </div>
-            ) : (
-              <div className="form-group">
-                <label className="form-label">Design</label>
-                <select
-                  className="form-select"
-                  value={selectedDesignId}
-                  onChange={(e) => setSelectedDesignId(e.target.value)}
-                >
-                  <option value="">Select a design...</option>
-                  {designs
-                    .filter((d) => d.type === selectedType)
-                    .map((design) => (
-                      <option key={design.id} value={design.id}>
-                        {design.name}
-                      </option>
-                    ))}
-                </select>
-              </div>
-            )}
+            {targetFields}
 
             <div className="form-row">
               <div className="form-group">
@@ -631,7 +604,7 @@ function SchedulerPage() {
                 disabled={
                   !startDate ||
                   !endDate ||
-                  (selectedType === 'playlist' ? !selectedPlaylistId : !selectedDesignId)
+                  (isListTarget(selectedType) ? !selectedPlaylistId : !selectedDesignId)
                 }
               >
                 {editingSchedule ? 'Save' : 'Create'}

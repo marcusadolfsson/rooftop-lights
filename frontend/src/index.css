@@ -778,6 +778,12 @@ body {
   vertical-align: middle;
 }
 
+/* Scenes get their own color so they read apart from playlists */
+.playlist-tag.scene-tag {
+  background-color: rgba(168, 85, 247, 0.15);
+  color: rgb(192, 132, 252);
+}
+
 /* [sec | times] toggle, its number and the resulting length */
 .playlist-item-timing {
   display: inline-flex;

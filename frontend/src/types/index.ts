@@ -89,10 +89,15 @@ export interface EffectParam {
   unit?: string;
 }
 
+/** A scene is a short piece of designs only, played in order; a playlist can also hold scenes and playlists. */
+export type PlaylistKind = 'playlist' | 'scene';
+
 export interface Playlist {
   id: string;
   name: string;
   play_mode: 'sequence' | 'random';
+  // Missing from older backends, which only had playlists
+  kind?: PlaylistKind;
   items: PlaylistItem[];
   // One pass in order (sequence) or one round of every item (random)
   totalSeconds?: number;
@@ -111,6 +116,7 @@ export interface PlaylistItem {
   design_name?: string | null;
   design_type?: string | null;
   child_playlist_name?: string | null;
+  child_playlist_kind?: PlaylistKind | null;
   is_playlist?: boolean;
   // Seconds mode plays for `duration`; times mode plays the design's cycle / the child playlist
   // `repeat_count` times (duration is then only the fallback)
@@ -140,6 +146,8 @@ export interface Schedule {
   design_type: 'static' | 'motion' | 'playlist';
   design_name?: string;
   playlist_name?: string;
+  // 'scene' when playlist_id is a scene
+  playlist_kind?: PlaylistKind | null;
   is_default: boolean;
   start_date: string | null;
   end_date: string | null;

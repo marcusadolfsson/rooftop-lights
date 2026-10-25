@@ -1,18 +1,32 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import type { Design, Playlist } from '../../types';
+import type { Design, Playlist, PlaylistKind } from '../../types';
 import SavedList, { trashIcon } from './SavedList';
-import { formatSeconds, MAX_REPEAT_COUNT, type EditingPlaylistItem, type PlaylistEditor } from './editors';
+import { formatSeconds, KIND_LABEL, MAX_REPEAT_COUNT, playlistKind, type EditingPlaylistItem, type PlaylistEditor } from './editors';
 
 interface PlaylistPanelProps {
+  // A scene editor or a playlist editor (editor.kind)
   editor: PlaylistEditor;
   designs: Design[];
+  // Every playlist and scene
   playlists: Playlist[];
   sidebarHeader: ReactNode;
   onSave: () => void;
+  // Turn a saved scene into a playlist or the other way round
+  onConvert: (id: string, to: PlaylistKind) => void;
 }
 
-export default function PlaylistPanel({ editor, designs, playlists, sidebarHeader, onSave }: PlaylistPanelProps) {
-  const { selectedPlaylist, items, dragKey } = editor;
+const CONVERT_ICON = <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 014-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 01-4 4H3"/></svg>;
+
+export default function PlaylistPanel({ editor, designs, playlists, sidebarHeader, onSave, onConvert }: PlaylistPanelProps) {
+  const { selectedPlaylist, items, dragKey, isScene, noun } = editor;
+  const kindLabel = KIND_LABEL[editor.kind];
+  const otherKind: PlaylistKind = isScene ? 'playlist' : 'scene';
+  const childKind = (id: string | null): PlaylistKind => {
+    const child = playlists.find((p) => p.id === id);
+    return child ? playlistKind(child) : 'playlist';
+  };
+  const addableScenes = editor.addablePlaylists.filter((p) => playlistKind(p) === 'scene');
+  const addablePlaylists = editor.addablePlaylists.filter((p) => playlistKind(p) === 'playlist');
 
   // Move buttons by `${item key}:${delta}`. After a move, focus follows the item; when its
   // arrow just became disabled (top/bottom) focus goes to the other arrow instead of <body>.
@@ -39,7 +53,7 @@ export default function PlaylistPanel({ editor, designs, playlists, sidebarHeade
   // Why "times" is unavailable for an item, or null when it can repeat
   const noTimesReason = (item: EditingPlaylistItem): string | null => {
     if (editor.cycleSeconds(item) !== null) return null;
-    if (item.child_playlist_id) return 'This playlist is empty, so it can only play for a number of seconds';
+    if (item.child_playlist_id) return `This ${childKind(item.child_playlist_id)} is empty, so it can only play for a number of seconds`;
     if (item.design_type === 'static') return 'Static designs have no cycle to repeat; set how many seconds to show it';
     return 'This effect has no fixed cycle (it is random or custom code), so it can only play for a number of seconds';
   };
@@ -50,8 +64,8 @@ export default function PlaylistPanel({ editor, designs, playlists, sidebarHeade
       <div className="design-sidebar">
         {sidebarHeader}
         <SavedList
-          title="Saved Playlists"
-          items={playlists.map((p) => ({
+          title={isScene ? 'Saved Scenes' : 'Saved Playlists'}
+          items={editor.saved.map((p) => ({
             id: p.id,
             name: p.name,
             meta: (
@@ -59,16 +73,27 @@ export default function PlaylistPanel({ editor, designs, playlists, sidebarHeade
               {p.items.length} items{p.totalSeconds ? ` · ${formatSeconds(p.totalSeconds)}` : ''}
             </span>
           ),
+            actions: (
+              <button
+                className="btn-icon"
+                style={{ padding: '0.2rem' }}
+                title={isScene ? 'Convert to playlist' : 'Convert to scene (designs only)'}
+                aria-label={`Convert ${p.name} to ${otherKind}`}
+                onClick={(e) => { e.stopPropagation(); onConvert(p.id, otherKind); }}
+              >
+                {CONVERT_ICON}
+              </button>
+            ),
           }))}
           selectedId={selectedPlaylist?.id}
           onSelect={(id) => { const p = playlists.find((x) => x.id === id); if (p) editor.load(p); }}
           onRename={editor.rename}
           onDelete={editor.remove}
         />
-        <button className="btn btn-primary btn-sm" style={{ width: '100%' }} onClick={editor.startNew}>New Playlist</button>
+        <button className="btn btn-primary btn-sm" style={{ width: '100%' }} onClick={editor.startNew}>New {kindLabel}</button>
       </div>
 
-      {/* Right: Playlist Editor */}
+      {/* Right: Playlist / Scene Editor */}
       <div className="design-main">
         <div className="card">
           <div className="card-header playlist-editor-header">
@@ -76,25 +101,32 @@ export default function PlaylistPanel({ editor, designs, playlists, sidebarHeade
               {selectedPlaylist ? (
                 <input
                   className="form-input"
-                  aria-label="Playlist name"
+                  aria-label={`${kindLabel} name`}
                   style={{ padding: '0.2rem 0.4rem', fontSize: '0.9rem', fontWeight: 600, background: 'transparent', border: '1px solid transparent', width: '200px' }}
                   value={editor.name}
                   onChange={(e) => editor.setName(e.target.value)}
                   onFocus={(e) => { e.target.style.borderColor = 'var(--border-color)'; }}
                   onBlur={(e) => { e.target.style.borderColor = 'transparent'; }}
                 />
-              ) : 'New Playlist'}
+              ) : `New ${kindLabel}`}
             </h3>
             <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-              <select className="form-select" aria-label="Play mode" style={{ width: 'auto', padding: '0.4rem 0.6rem', fontSize: '0.8rem' }} value={editor.mode} onChange={(e) => editor.setMode(e.target.value as 'sequence' | 'random')}>
-                <option value="sequence">Sequential</option>
-                <option value="random">Random</option>
-              </select>
+              {/* Scenes always play in order */}
+              {!isScene && (
+                <select className="form-select" aria-label="Play mode" style={{ width: 'auto', padding: '0.4rem 0.6rem', fontSize: '0.8rem' }} value={editor.mode} onChange={(e) => editor.setMode(e.target.value as 'sequence' | 'random')}>
+                  <option value="sequence">Sequential</option>
+                  <option value="random">Random</option>
+                </select>
+              )}
               <button className="btn btn-primary btn-sm" onClick={onSave} disabled={items.length === 0}>Save</button>
             </div>
           </div>
           {items.length === 0 ? (
-            <p style={{ color: 'var(--text-secondary)', textAlign: 'center', padding: '1.5rem 0' }}>Add designs or playlists from the list below to build your playlist.</p>
+            <p style={{ color: 'var(--text-secondary)', textAlign: 'center', padding: '1.5rem 0' }}>
+              {isScene
+                ? 'Add designs from the list below to build your scene. It plays them in order, then starts again.'
+                : 'Add designs, scenes or playlists from the list below to build your playlist.'}
+            </p>
           ) : (
             <div className="playlist-items">
               {items.map((item, idx) => {
@@ -126,14 +158,14 @@ export default function PlaylistPanel({ editor, designs, playlists, sidebarHeade
                   <span className="playlist-item-name">
                     {label}{' '}
                     {item.child_playlist_id
-                      ? <span className="playlist-tag">Playlist</span>
+                      ? <span className={`playlist-tag${childKind(item.child_playlist_id) === 'scene' ? ' scene-tag' : ''}`}>{KIND_LABEL[childKind(item.child_playlist_id)]}</span>
                       : <span style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }}>({item.design_type})</span>}
                   </span>
                   <span className="playlist-item-timing">
                     {/* Play for X seconds, or X complete cycles (designs) / times through (playlists) */}
                     <span className="preview-mode-toggle playlist-item-mode" role="group" aria-label={`How long ${label} plays`}>
                       <button type="button" className={mode === 'seconds' ? 'active' : ''} aria-pressed={mode === 'seconds'} onClick={() => editor.updateItem(item.key, 'repeat_mode', 'seconds')}>sec</button>
-                      <span title={noTimes ?? (item.child_playlist_id ? 'Play the whole playlist this many times' : 'Play this many complete cycles of the effect')}>
+                      <span title={noTimes ?? (item.child_playlist_id ? `Play the whole ${childKind(item.child_playlist_id)} this many times` : 'Play this many complete cycles of the effect')}>
                         <button type="button" className={mode === 'times' ? 'active' : ''} aria-pressed={mode === 'times'} disabled={noTimes !== null} onClick={() => editor.updateItem(item.key, 'repeat_mode', 'times')}>times</button>
                       </span>
                     </span>
@@ -167,7 +199,7 @@ export default function PlaylistPanel({ editor, designs, playlists, sidebarHeade
           )}
         </div>
         <div className="card">
-          <div className="card-header"><h3 className="card-title">Add Design or Playlist</h3></div>
+          <div className="card-header"><h3 className="card-title">{isScene ? 'Add Design' : 'Add Design, Scene or Playlist'}</h3></div>
           <table className="table saved-designs-table">
             <tbody>
               {designs.map((design) => (
@@ -176,7 +208,7 @@ export default function PlaylistPanel({ editor, designs, playlists, sidebarHeade
                     <button
                       type="button"
                       className="saved-item-button"
-                      aria-label={`Add ${design.name} (${design.type}) to playlist`}
+                      aria-label={`Add ${design.name} (${design.type}) to ${noun}`}
                       onClick={(e) => { e.stopPropagation(); editor.addDesign(design.id); }}
                     >
                       {design.name} <span style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', marginLeft: '0.5rem' }}>{design.type}</span>
@@ -185,16 +217,17 @@ export default function PlaylistPanel({ editor, designs, playlists, sidebarHeade
                   <td style={{ width: '1px' }}><span style={{ color: 'var(--primary-color)', fontSize: '1.2rem', fontWeight: 600 }} aria-hidden="true">+</span></td>
                 </tr>
               ))}
-              {editor.addablePlaylists.map((playlist) => (
+              {[...addableScenes, ...addablePlaylists].map((playlist) => (
                 <tr key={playlist.id} style={{ cursor: 'pointer' }} onClick={() => editor.addPlaylist(playlist.id)}>
                   <td>
                     <button
                       type="button"
                       className="saved-item-button"
-                      aria-label={`Add playlist ${playlist.name} to playlist`}
+                      aria-label={`Add ${playlistKind(playlist)} ${playlist.name} to playlist`}
                       onClick={(e) => { e.stopPropagation(); editor.addPlaylist(playlist.id); }}
                     >
-                      {playlist.name} <span className="playlist-tag" style={{ marginLeft: '0.5rem' }}>Playlist</span>
+                      {playlist.name}{' '}
+                      <span className={`playlist-tag${playlistKind(playlist) === 'scene' ? ' scene-tag' : ''}`} style={{ marginLeft: '0.5rem' }}>{KIND_LABEL[playlistKind(playlist)]}</span>
                       <span style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', marginLeft: '0.5rem' }}>
                         {playlist.items.length} items{playlist.totalSeconds ? ` · ${formatSeconds(playlist.totalSeconds)}` : ''}
                       </span>

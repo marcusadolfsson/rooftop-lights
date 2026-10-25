@@ -45,7 +45,11 @@ A web app for designing, previewing and scheduling shows on architectural RGBW l
 
 ![Motion effect editor](docs/screenshots/design-motion.png)
 
-**Playlists.** Chain designs and other playlists, played in sequence or at random. Each item plays for a number of seconds or a number of times: a motion effect that many complete cycles (static designs and random effects like Sparkle or Fire only take seconds), a nested playlist that many times through. The editor shows each item's length and the playlist total.
+**Scenes.** A short combined piece built from designs only, for example Lightning for 5 s, then Fireworks 3 times, then a red fade. A scene plays its designs in order and loops. New items default to one complete cycle when the effect has one, otherwise to a number of seconds. Scenes have their own tab and show up in the design pickers tagged "Scene".
+
+**Playlists.** The show you schedule. A playlist chains designs, scenes and other playlists, played in sequence or at random. Each item plays for a number of seconds or a number of times: a motion effect that many complete cycles (static designs and random effects like Sparkle or Fire only take seconds), a scene or nested playlist that many times through. The editor shows each item's length and the playlist total.
+
+Scenes and playlists are the same thing underneath (one `playlists` table with a `kind`), so either can be converted to the other with one click in its list. Items are kept. A playlist can only become a scene if it holds designs only.
 
 **AI designer.** Describe a show in plain language ("a warm sunset from orange in the west to purple in the east") and Claude creates a new design, modifies an existing one, or writes a custom animation. It knows the layout, the available effects and your saved designs. This feature is optional and only appears when `ANTHROPIC_API_KEY` is set.
 
@@ -59,7 +63,7 @@ Every page has a live preview fed over WebSocket, in 2D (the walls unrolled into
 
 ### Schedule
 
-- A **default** design or playlist plays whenever nothing else is scheduled.
+- A **default** design, scene or playlist plays whenever nothing else is scheduled.
 - **Date schedules** override it between a start date and time and an end date and time, and a priority decides between overlapping schedules.
 - The ArtNet output strip at the top shows exactly what is being sent to the lights right now.
 
@@ -175,7 +179,7 @@ These protections are built in:
 | Layout | `GET /api/layout/layout`, `GET/POST /api/layout/walls`, `PUT/DELETE /api/layout/walls/:id`, `POST /api/layout/walls/reorder`, `POST /api/layout/lights`, `PUT/DELETE /api/layout/lights/:id`, `GET/POST /api/layout/groups`, `PUT/DELETE /api/layout/groups/:id` |
 | Designs | `GET/POST /api/designs`, `GET/PUT/DELETE /api/designs/:id`, `POST /api/designs/:id/copy`, `GET /api/designs/effects/types` |
 | AI | `GET /api/designs/ai/status`, `POST /api/designs/ai/generate` |
-| Playlists | `GET/POST /api/playlists`, `GET/PUT/DELETE /api/playlists/:id`, `POST /api/playlists/:id/items`, `PUT/DELETE /api/playlists/:id/items/:itemId`, `POST /api/playlists/:id/reorder` |
+| Playlists & scenes | `GET /api/playlists[?kind=scene\|playlist]`, `POST /api/playlists`, `GET/PUT/DELETE /api/playlists/:id`, `POST /api/playlists/:id/convert`, `POST /api/playlists/:id/items`, `PUT/DELETE /api/playlists/:id/items/:itemId`, `POST /api/playlists/:id/reorder` |
 | Schedules | `GET/POST /api/schedules`, `PUT/DELETE /api/schedules/:id`, `GET/POST /api/schedules/default`, `GET /api/schedules/active` |
 | Preview | `GET /api/preview/status`, `POST /api/preview/start`, `/effect`, `/playlist`, `/lights`, `/stop`, `/clear-soft` |
 | ArtNet | `GET/PUT /api/artnet/config`, `GET /api/artnet/status`, `POST /api/artnet/test` |
