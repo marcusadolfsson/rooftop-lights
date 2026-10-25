@@ -462,8 +462,8 @@ export type AudioRotation = typeof AUDIO_ROTATIONS[number];
 function audioMeterOptions(effect: MotionEffect): MeterOptions {
   const p = effect.params ?? {};
   return {
-    attack: num(p.attack, 0.05, 0, 5),
-    release: num(p.release, 0.3, 0, 10),
+    attack: num(p.attack, 0.03, 0, 5),
+    release: num(p.release, 0.15, 0, 10),
     gain: num(p.gain, 1, 0, 10),
     autoGain: bool(p.autoGain, false),
     peakHold: bool(p.peakHold, true),
@@ -481,13 +481,18 @@ export function simulatedAudioLevel(frame: number, bpm: number): number {
   const beatFrames = (FPS * 60) / Math.max(30, Math.min(300, bpm));
   const beat = Math.floor(f / beatFrames);
   const sinceBeat = (f - beat * beatFrames) / FPS;
-  const kick = (0.7 + 0.3 * rand(beat, 11)) * Math.exp(-sinceBeat / 0.12);
+  // Kick on every beat, off-beat hat, and a low floor between them so the meter swings widely
+  // Each kick holds briefly at full strength so the meter's attack can reach the top
+  const kick = (0.8 + 0.2 * rand(beat, 11)) * (sinceBeat < 0.08 ? 1 : Math.exp(-(sinceBeat - 0.08) / 0.1));
   const half = beatFrames / 2;
   const sinceHalf = sinceBeat * FPS >= half ? (sinceBeat * FPS - half) / FPS : Infinity;
-  const hat = rand(beat, 12) < 0.8 ? 0.6 * Math.exp(-sinceHalf / 0.06) : 0;
+  const hat = rand(beat, 12) < 0.8 ? 0.35 * Math.exp(-sinceHalf / 0.06) : 0;
+  // 8-bar sections: mostly full, sometimes a quiet break, and a 4-bar build-up into each section
   const section = Math.floor(beat / 32);
-  const loudness = rand(section, 13) < 0.15 ? 0.3 : 0.6 + 0.4 * rand(section, 14);
-  const level = loudness * (20 + 60 * kick + 20 * hat) + 8 * rand(f, 15);
+  const inSection = (beat % 32) / 32;
+  const base = rand(section, 13) < 0.15 ? 0.4 : 0.88 + 0.12 * rand(section, 14);
+  const loudness = inSection >= 0.5 ? base * (0.6 + 0.4 * ((inSection - 0.5) / 0.5)) : base;
+  const level = loudness * (100 * kick + 35 * hat) + 3 * rand(f, 15);
   return Math.max(0, Math.min(100, level));
 }
 
