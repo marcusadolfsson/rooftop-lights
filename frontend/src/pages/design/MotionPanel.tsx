@@ -375,7 +375,9 @@ export function MotionDesignEditor({
 /** A param with showIf is only shown while the param it depends on has that value. */
 function isParamShown(param: EffectParam, params: Record<string, unknown>): boolean {
   if (!param.showIf) return true;
-  return params[param.showIf.param] === param.showIf.equals;
+  const { equals } = param.showIf;
+  // A list means "any of these values"
+  return Array.isArray(equals) ? equals.includes(params[param.showIf.param]) : params[param.showIf.param] === equals;
 }
 
 // Ids of the audio inputs the server has heard from, offered as suggestions for a source id

@@ -678,7 +678,7 @@ export class EffectEngine {
       case 'wave':
         return this.generateWave(effect, frameNum);
       case 'sine':
-        return this.generateSine(effect, frameNum);
+        return this.generateSine(effect, frameNum, realFrame);
       case 'chase':
         // Chase was merged into Comet (a chase is a comet with no tail); older designs still render
         return this.generateComet(chaseAsComet(effect), frameNum);
@@ -1020,7 +1020,7 @@ export class EffectEngine {
 
   // Sine Wave - a sine curve drawn across the rows, rolling along the walls. Each light's
   // brightness falls off with its distance from the curve, so the shape reads on a few rows.
-  private generateSine(effect: MotionEffect, frameNum: number): Map<number, RGBW> {
+  private generateSine(effect: MotionEffect, frameNum: number, realFrame: number): Map<number, RGBW> {
     const frame = new Map<number, RGBW>();
     const line: RGBW = effect.colors[0] || { r: 0, g: 0, b: 0, w: 255 };
     const background: RGBW = effect.colors[1] || BLACK;
@@ -1032,7 +1032,19 @@ export class EffectEngine {
     const span = effect.params?.span !== undefined
       ? num(effect.params.span, this.rows, 1, this.rows * 2)
       : 2 * num(effect.params?.height, middle, 0, this.rows) + 1;
-    const height = (span - 1) / 2;
+    // Optional audio drive: the curve's height follows the level (silence = flat line on the middle
+    // row, full level = the Height setting), from simulated music or a live audio source
+    const audio = effect.params?.audio;
+    let drive = 1;
+    if (audio === 'random' || audio === 'api') {
+      try {
+        const meter = this.audioMeter({ ...effect, params: { ...effect.params, input: audio } }, realFrame);
+        drive = Number.isFinite(meter.level) ? Math.max(0, Math.min(1, meter.level)) : 0;
+      } catch {
+        drive = 0;
+      }
+    }
+    const height = ((span - 1) / 2) * drive;
     const thickness = num(effect.params?.thickness, 0.7, 0.2, 3);
     const reverse = bool(effect.params?.reverse, false);
     const travel = frameNum * WAVE_LIGHTS_PER_FRAME * (reverse ? -1 : 1);

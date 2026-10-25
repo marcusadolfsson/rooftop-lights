@@ -144,6 +144,16 @@ const EFFECT_TYPES: Omit<EffectTypeInfo, 'colorLabels' | 'colorHint' | 'stepFram
       span: { type: 'number', default: 3, min: 1, max: 5, step: 0.5, label: 'Height (top to bottom)', unit: ' panels' },
       thickness: { type: 'number', default: 0.7, min: 0.2, max: 2, step: 0.1, label: 'Line thickness', unit: ' rows' },
       reverse: { type: 'boolean', default: false },
+      // Audio drive: the curve's height follows the level of simulated music or a live audio source
+      audio: {
+        type: 'select', default: 'off', label: 'Height follows audio',
+        options: [{ value: 'off', label: 'Off' }, { value: 'random', label: 'Simulated music' }, { value: 'api', label: 'Live audio input' }],
+      },
+      source: { type: 'string', default: '', label: 'Source id (blank = most recent)', suggestions: 'audioSources', showIf: { param: 'audio', equals: 'api' } },
+      bpm: { type: 'number', default: 120, min: 60, max: 180, step: 1, label: 'Simulated tempo', unit: ' bpm', showIf: { param: 'audio', equals: 'random' } },
+      gain: { type: 'number', default: 1, min: 0.25, max: 4, step: 0.05, label: 'Gain', unit: '×', showIf: { param: 'audio', equals: ['random', 'api'] } },
+      attack: { type: 'number', default: 0.03, min: 0, max: 1, step: 0.01, label: 'Attack', unit: ' s', showIf: { param: 'audio', equals: ['random', 'api'] } },
+      release: { type: 'number', default: 0.15, min: 0, max: 3, step: 0.05, label: 'Release', unit: ' s', showIf: { param: 'audio', equals: ['random', 'api'] } },
     },
   },
   {
