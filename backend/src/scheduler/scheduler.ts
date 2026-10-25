@@ -6,7 +6,7 @@ import { getEffectEngine, normalizeMotionEffect, MotionEffect, RGBW, Light } fro
 import { findActiveSchedule, ScheduleRow } from './activeSchedule.js';
 import { logRateLimited } from '../utils/rateLimitedLog.js';
 import {
-  buildPlaylistTimeline, locate, nodeFrames, shuffleNode,
+  buildPlaylistTimeline, locate, nodeFrames, shuffleNode, timelineStartIndex,
   PlaylistTimeline, TimelineItemRow, TimelineNode, TimelineSource,
 } from '../services/playlistTimeline.js';
 
@@ -49,6 +49,20 @@ export interface PreviewDesign {
   data: unknown;
 }
 
+/**
+ * Data of a 'playlist' preview: a saved playlist (playlistId), or the editor's unsaved contents
+ * (items + playMode; playlistId then names the playlist being edited, if it is saved, so nested
+ * items can't loop back into it). startAt is the item index playback starts from.
+ */
+export interface PlaylistPreviewData {
+  playlistId?: string;
+  items?: TimelineItemRow[];
+  playMode?: 'sequence' | 'random';
+  startAt?: number;
+}
+
+const UNSAVED_PLAYLIST_ID = '(unsaved)';
+
 // Re-evaluate the active schedule / playlist rows at most this often (ms).
 // Routes that change data call invalidate() so edits show up immediately.
 const SCHEDULE_TTL_MS = 1000;
@@ -71,14 +85,19 @@ class PlaylistPlayer {
   private current: TimelineNode | null = null;
   private frame = 0;
   private last: { designId: string; frame: number } | null = null;
+  private sourceIndexes: number[] = [];
 
   reset(): void {
     this.signature = '';
     this.last = null;
   }
 
-  /** Returns the design to show and the frame number within it. */
-  step(playlistId: string, timeline: PlaylistTimeline): { designId: string; frame: number } | null {
+  /**
+   * Returns the design to show and the frame number within it. `startAt` (an index into the
+   * playlist's own items, used by the editor's per-item Play) is where playback starts; after
+   * that it continues and loops as usual.
+   */
+  step(playlistId: string, timeline: PlaylistTimeline, startAt?: number): { designId: string; frame: number } | null {
     const items = timeline.items;
     if (items.length === 0) {
       this.reset();
@@ -89,7 +108,10 @@ class PlaylistPlayer {
     const signature = `${playlistId}|${timeline.signature}`;
     if (signature !== this.signature) {
       this.signature = signature;
-      this.index = timeline.playMode === 'random' ? Math.floor(Math.random() * items.length) : 0;
+      this.sourceIndexes = timeline.sourceIndexes;
+      this.index = startAt !== undefined
+        ? timelineStartIndex(timeline, startAt)
+        : timeline.playMode === 'random' ? Math.floor(Math.random() * items.length) : 0;
       this.startItem(items);
     }
 
@@ -115,7 +137,7 @@ class PlaylistPlayer {
   position(): PlaylistPosition | null {
     if (!this.signature || !this.current || !this.last) return null;
     return {
-      itemIndex: this.index,
+      itemIndex: this.sourceIndexes[this.index] ?? this.index,
       itemFrame: this.frame,
       itemFrames: nodeFrames(this.current),
       designId: this.last.designId,
@@ -163,6 +185,8 @@ export class Scheduler {
   private cachedSchedule: { at: number; schedule: ScheduleRow | null } | null = null;
   private playlistCache: Map<string, { at: number; playlist: PlaylistRow | undefined; items: TimelineItemRow[] }> = new Map();
   private timelineCache: Map<string, { at: number; timeline: PlaylistTimeline | null }> = new Map();
+  // Timelines of unsaved (inline) playlist previews, by their preview data
+  private inlineTimelineCache: WeakMap<object, { at: number; timeline: PlaylistTimeline | null }> = new WeakMap();
   private designCache: Map<string, { updatedAt: string | null; type: string; data: unknown }> = new Map();
   private stmtDb: Database.Database | null = null;
   private stmts: {
@@ -200,6 +224,7 @@ export class Scheduler {
     this.cachedSchedule = null;
     this.playlistCache.clear();
     this.timelineCache.clear();
+    this.inlineTimelineCache = new WeakMap();
     this.designCache.clear();
   }
 
@@ -277,6 +302,20 @@ export class Scheduler {
       info.effectType = data?.type;
     } else if (this.livePreviewDesign.type === 'playlist') {
       info.playlist = this.artnetSource.playlist.position();
+    }
+    return info;
+  }
+
+  /**
+   * What the preview (live or WebSocket-only) is showing, with the playlist position when it is a
+   * playlist. null when there is no preview.
+   */
+  getPreviewInfo(): { type: string; live: boolean; playlist?: PlaylistPosition | null } | null {
+    if (!this.previewDesign) return null;
+    const live = this.isLivePreview && this.livePreviewDesign === this.previewDesign;
+    const info: { type: string; live: boolean; playlist?: PlaylistPosition | null } = { type: this.previewDesign.type, live };
+    if (this.previewDesign.type === 'playlist') {
+      info.playlist = (live ? this.artnetSource : this.wsSource).playlist.position();
     }
     return info;
   }
@@ -429,15 +468,12 @@ export class Scheduler {
     return entry;
   }
 
-  /** Playlist with nested playlists expanded, rebuilt at most every SCHEDULE_TTL_MS (or on invalidate). */
-  private loadTimeline(playlistId: string): PlaylistTimeline | null {
-    const now = Date.now();
-    const cached = this.timelineCache.get(playlistId);
-    if (cached && now - cached.at < SCHEDULE_TTL_MS) return cached.timeline;
-
+  /** Timeline data from the database (through the caches); `inline` stands in for one playlist. */
+  private timelineSource(inline?: { id: string; playlist: { play_mode: string; items: TimelineItemRow[] } }): TimelineSource {
     const engine = getEffectEngine();
-    const src: TimelineSource = {
+    return {
       playlist: (id) => {
+        if (inline && id === inline.id) return inline.playlist;
         const { playlist, items } = this.loadPlaylist(id);
         return playlist ? { play_mode: playlist.play_mode, items } : undefined;
       },
@@ -447,7 +483,15 @@ export class Scheduler {
         return design.type === 'motion' ? engine.cycleFrames(design.data) : null;
       },
     };
-    const timeline = buildPlaylistTimeline(playlistId, src);
+  }
+
+  /** Playlist with nested playlists expanded, rebuilt at most every SCHEDULE_TTL_MS (or on invalidate). */
+  private loadTimeline(playlistId: string): PlaylistTimeline | null {
+    const now = Date.now();
+    const cached = this.timelineCache.get(playlistId);
+    if (cached && now - cached.at < SCHEDULE_TTL_MS) return cached.timeline;
+
+    const timeline = buildPlaylistTimeline(playlistId, this.timelineSource());
     this.timelineCache.set(playlistId, { at: now, timeline });
     if (this.timelineCache.size > 50) this.timelineCache.delete(this.timelineCache.keys().next().value as string);
     return timeline;
@@ -466,11 +510,24 @@ export class Scheduler {
     return BLANK;
   }
 
-  private renderPlaylist(playlistId: string, source: RenderSource): Map<number, RGBW> {
-    const timeline = this.loadTimeline(playlistId);
+  /** Timeline of an unsaved playlist preview, rebuilt like saved ones (designs it plays may change). */
+  private loadInlineTimeline(data: PlaylistPreviewData & { items: TimelineItemRow[] }): PlaylistTimeline | null {
+    const now = Date.now();
+    const cached = this.inlineTimelineCache.get(data);
+    if (cached && now - cached.at < SCHEDULE_TTL_MS) return cached.timeline;
+
+    const id = data.playlistId ?? UNSAVED_PLAYLIST_ID;
+    const src = this.timelineSource({ id, playlist: { play_mode: data.playMode ?? 'sequence', items: data.items } });
+    const timeline = buildPlaylistTimeline(id, src);
+    this.inlineTimelineCache.set(data, { at: now, timeline });
+    return timeline;
+  }
+
+  private renderPlaylist(playlistId: string, source: RenderSource, startAt?: number, inline?: PlaylistPreviewData & { items: TimelineItemRow[] }): Map<number, RGBW> {
+    const timeline = inline ? this.loadInlineTimeline(inline) : this.loadTimeline(playlistId);
     if (!timeline) return BLANK;
 
-    const current = source.playlist.step(playlistId, timeline);
+    const current = source.playlist.step(playlistId, timeline, startAt);
     if (!current) return BLANK;
 
     const design = this.loadDesign(current.designId);
@@ -481,8 +538,12 @@ export class Scheduler {
 
   private renderDesign(type: string, data: unknown, source: RenderSource): Map<number, RGBW> {
     if (type === 'playlist') {
-      const playlistId = (data as { playlistId?: unknown } | null)?.playlistId;
-      return typeof playlistId === 'string' ? this.renderPlaylist(playlistId, source) : BLANK;
+      const preview = (data ?? {}) as PlaylistPreviewData;
+      const startAt = typeof preview.startAt === 'number' ? preview.startAt : undefined;
+      if (Array.isArray(preview.items)) {
+        return this.renderPlaylist(preview.playlistId ?? UNSAVED_PLAYLIST_ID, source, startAt, preview as PlaylistPreviewData & { items: TimelineItemRow[] });
+      }
+      return typeof preview.playlistId === 'string' ? this.renderPlaylist(preview.playlistId, source, startAt) : BLANK;
     }
     return this.renderDesignAt(type, data, source.frame);
   }

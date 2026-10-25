@@ -4,6 +4,7 @@ import { designsAPI, playlistsAPI, schedulesAPI, layoutAPI, previewAPI, healthAP
 import LiveLightPreview from '../components/LiveLightPreview';
 import { useEscapeKey } from '../hooks/useEscapeKey';
 import type { Design, Playlist, Schedule, LayoutData } from '../types';
+import { groupByFolder, hasFolders, UNFILED_LABEL } from '../utils/folders';
 
 const ACTIVE_POLL_MS = 30000;
 
@@ -12,6 +13,17 @@ const ACTIVE_POLL_MS = 30000;
 type TargetType = 'static' | 'motion' | 'scene' | 'playlist';
 const TARGET_LABELS: Record<TargetType, string> = { static: 'Static Design', motion: 'Motion Effect', scene: 'Scene', playlist: 'Playlist' };
 const isListTarget = (t: TargetType) => t === 'scene' || t === 'playlist';
+
+/** Picker options grouped by folder (Unfiled first) once anything is in a folder; flat otherwise. */
+function folderOptions<T extends { id: string; folder?: string | null }>(items: T[], label: (item: T) => string) {
+  const option = (item: T) => <option key={item.id} value={item.id}>{label(item)}</option>;
+  if (!hasFolders(items)) return items.map(option);
+  return groupByFolder(items).map((group) => (
+    <optgroup key={group.folder ?? ''} label={group.folder ?? UNFILED_LABEL}>
+      {group.items.map(option)}
+    </optgroup>
+  ));
+}
 
 // Parse "YYYY-MM-DD" as a local calendar date. new Date("YYYY-MM-DD") is UTC
 // midnight, which displays as the previous day in time zones west of UTC.
@@ -272,11 +284,7 @@ function SchedulerPage() {
             onChange={(e) => setSelectedPlaylistId(e.target.value)}
           >
             <option value="">Select a {selectedType}...</option>
-            {listOptions.map((playlist) => (
-              <option key={playlist.id} value={playlist.id}>
-                {playlist.name} ({playlist.items.length} items)
-              </option>
-            ))}
+            {folderOptions(listOptions, (playlist) => `${playlist.name} (${playlist.items.length} items)`)}
           </select>
         </div>
       ) : (
@@ -289,13 +297,7 @@ function SchedulerPage() {
             onChange={(e) => setSelectedDesignId(e.target.value)}
           >
             <option value="">Select a design...</option>
-            {designs
-              .filter((d) => d.type === selectedType)
-              .map((design) => (
-                <option key={design.id} value={design.id}>
-                  {design.name}
-                </option>
-              ))}
+            {folderOptions(designs.filter((d) => d.type === selectedType), (design) => design.name)}
           </select>
         </div>
       )}

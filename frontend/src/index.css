@@ -822,6 +822,214 @@ body {
   font-weight: 600;
 }
 
+/* Folder groups in the saved lists and pickers: collapsible header rows */
+.saved-designs-table .folder-row td {
+  padding: 0.3rem 0.25rem 0.2rem;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.saved-designs-table tbody + tbody .folder-row:not(.folder-row-sub) td {
+  padding-top: 0.5rem;
+}
+
+.table tr.folder-row:hover {
+  background-color: transparent;
+}
+
+.folder-row-inner {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.folder-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex: 1;
+  min-width: 0;
+  padding: 0.15rem 0.1rem;
+  border: none;
+  border-radius: 0.25rem;
+  background: none;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.folder-toggle:hover {
+  color: var(--accent-blue);
+}
+
+.folder-toggle:focus-visible {
+  outline: 2px solid var(--primary-color);
+  outline-offset: 1px;
+}
+
+.folder-chevron {
+  flex-shrink: 0;
+  color: var(--text-secondary);
+  transition: transform 0.15s;
+}
+
+.folder-toggle[aria-expanded='true'] .folder-chevron {
+  transform: rotate(90deg);
+}
+
+.folder-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--accent-yellow);
+}
+
+.folder-row-unfiled .folder-icon {
+  color: var(--text-secondary);
+}
+
+.folder-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.folder-count {
+  flex-shrink: 0;
+  padding: 0 0.35rem;
+  border-radius: 999px;
+  background-color: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 0.68rem;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.folder-actions {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+.folder-actions .btn-icon {
+  padding: 0.2rem;
+}
+
+.folder-actions .folder-delete {
+  color: var(--danger-color);
+}
+
+.folder-rename-input {
+  flex: 1;
+  min-width: 0;
+  padding: 0.2rem 0.4rem;
+  font-size: 0.8rem;
+}
+
+/* Type headings (Static, Motion, ...) inside a picker folder */
+.saved-designs-table .folder-row-sub td {
+  padding: 0.2rem 0.25rem 0.1rem 0.75rem;
+  border-bottom: none;
+}
+
+.folder-row-sub .folder-toggle {
+  color: var(--text-secondary);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* Items inside a folder sit slightly in from its header */
+.saved-designs-table .folder-group tr:not(.folder-row) td:first-child {
+  padding-left: 1.1rem;
+}
+
+/* Picker rows always sit under a type heading */
+.picker-table tr:not(.folder-row) td:first-child {
+  padding-left: 1.1rem;
+}
+
+.picker-table .folder-group tr:not(.folder-row) td:first-child {
+  padding-left: 1.5rem;
+}
+
+/* Save / Move dialogs: new-folder name and the matching-folder hint */
+.folder-new-input {
+  margin-top: 0.5rem;
+}
+
+.folder-hint {
+  margin-top: 0.35rem;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+}
+
+.folder-modal-item {
+  margin-bottom: 0.75rem;
+  color: var(--text-primary);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+/* Scene / playlist editor: picker search, drag into the list, playback */
+.picker-header {
+  gap: 0.75rem;
+}
+
+.picker-search {
+  width: 180px;
+  padding: 0.3rem 0.5rem;
+  font-size: 0.8rem;
+}
+
+.picker-empty {
+  padding: 0.75rem 0;
+  color: var(--text-secondary);
+  text-align: center;
+  font-size: 0.85rem;
+}
+
+.picker-row[draggable='true'] {
+  cursor: grab;
+}
+
+.picker-row.dragging {
+  opacity: 0.5;
+}
+
+.playlist-empty {
+  color: var(--text-secondary);
+  text-align: center;
+  padding: 1.5rem 0.5rem;
+  border: 1px dashed transparent;
+  border-radius: 0.375rem;
+}
+
+.playlist-empty.drop-active {
+  border-color: var(--primary-color);
+  background-color: rgba(37, 99, 235, 0.08);
+}
+
+/* Insertion line where a dragged picker row would land */
+.playlist-item.drop-before {
+  box-shadow: 0 -4px 0 -1px var(--primary-color);
+}
+
+.playlist-item.drop-after {
+  box-shadow: 0 4px 0 -1px var(--primary-color);
+}
+
+.playlist-item.playing {
+  border-color: var(--success-color);
+  background-color: rgba(16, 185, 129, 0.1);
+}
+
+.playlist-item.playing .playlist-item-play {
+  color: var(--success-color);
+}
+
 /* Schedule Calendar */
 .schedule-list {
   display: flex;
@@ -1857,6 +2065,45 @@ body {
 
   .saved-designs-table .btn-icon {
     padding: 0.5rem !important;
+  }
+
+  /* Folder headers and the picker search on phones */
+  .saved-designs-table .folder-row td {
+    padding: 0.4rem 0.25rem 0.3rem;
+  }
+
+  .folder-toggle {
+    min-height: 36px;
+    font-size: 0.85rem;
+  }
+
+  .folder-row-sub .folder-toggle {
+    min-height: 32px;
+    font-size: 0.72rem;
+  }
+
+  .folder-actions .btn-icon {
+    min-width: 34px;
+    min-height: 34px;
+  }
+
+  .picker-header {
+    flex-wrap: wrap;
+  }
+
+  .picker-search {
+    flex: 1 1 100%;
+    width: 100%;
+    min-height: 36px;
+  }
+
+  .picker-table .folder-group tr:not(.folder-row) td:first-child {
+    padding-left: 1.1rem;
+  }
+
+  /* Dragging from the picker needs a mouse */
+  .drag-hint {
+    display: none;
   }
 
   /* Schedule page */

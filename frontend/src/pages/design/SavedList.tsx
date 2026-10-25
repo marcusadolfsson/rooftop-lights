@@ -1,5 +1,7 @@
 import { useRef, useState, type ReactNode } from 'react';
 import { useIsMobile } from '../../hooks/useMediaQuery';
+import { groupByFolder, groupKey, hasFolders, useCollapsedGroups } from '../../utils/folders';
+import { FolderHeaderRow, MOVE_ICON, MoveToFolderModal, type FolderControls } from './Folders';
 
 export interface SavedListItem {
   id: string;
@@ -8,6 +10,8 @@ export interface SavedListItem {
   meta?: ReactNode;
   // Extra row buttons, shown before rename/delete
   actions?: ReactNode;
+  // Folder it's grouped under (null/missing: Unfiled)
+  folder?: string | null;
 }
 
 interface SavedListProps {
@@ -17,14 +21,26 @@ interface SavedListProps {
   onSelect: (id: string) => void;
   onRename: (id: string, name: string) => Promise<void>;
   onDelete: (id: string) => void;
+  // Remembers which folder groups are collapsed (per list, per browser)
+  scope: string;
+  folders: FolderControls;
+  onMove: (id: string, folder: string | null) => Promise<void>;
 }
 
 const EDIT_ICON = <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M17 3a2.85 2.85 0 114 4L7.5 20.5 2 22l1.5-5.5z"/></svg>;
 export const trashIcon = (size = 13) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>;
 
-/** Saved designs / playlists sidebar card: select, inline rename, delete. */
-export default function SavedList({ title, items, selectedId, onSelect, onRename, onDelete }: SavedListProps) {
+/**
+ * Saved designs / playlists sidebar card: select, inline rename, move to folder, delete. Items are
+ * grouped by folder under collapsible headers (Unfiled first) once anything is in a folder.
+ */
+export default function SavedList({ title, items, selectedId, onSelect, onRename, onDelete, scope, folders, onMove }: SavedListProps) {
   const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [movingId, setMovingId] = useState<string | null>(null);
+  const movingItem = items.find((i) => i.id === movingId);
+  const { isCollapsed, toggle } = useCollapsedGroups(scope);
+  const showFolders = hasFolders(items);
+  const groups = showFolders ? groupByFolder(items) : [{ folder: null, items }];
   const [renameValue, setRenameValue] = useState('');
   // Enter and the blur that follows it would otherwise both submit
   const submittingRef = useRef(false);
@@ -57,6 +73,59 @@ export default function SavedList({ title, items, selectedId, onSelect, onRename
     }
   };
 
+  const renderRow = (item: SavedListItem) => {
+    const selected = selectedId === item.id;
+    return (
+      <tr
+        key={item.id}
+        style={{ cursor: 'pointer', backgroundColor: selected ? 'var(--bg-tertiary)' : undefined, borderLeft: selected ? '3px solid var(--primary-color)' : '3px solid transparent' }}
+        onClick={() => select(item.id)}
+      >
+        <td style={{ fontWeight: selected ? 600 : 400 }}>
+          {renamingId === item.id ? (
+            <input
+              className="form-input"
+              style={{ padding: '0.2rem 0.4rem', fontSize: '0.8rem', width: '100%' }}
+              aria-label={`Rename ${item.name}`}
+              value={renameValue}
+              onChange={(e) => setRenameValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') finishRename(item.id);
+                if (e.key === 'Escape') setRenamingId(null);
+              }}
+              onBlur={() => finishRename(item.id)}
+              onClick={(e) => e.stopPropagation()}
+              autoFocus
+            />
+          ) : (
+            // Real button so the row is reachable and activatable from the keyboard;
+            // the row's onClick still handles mouse clicks anywhere in the row
+            <button
+              type="button"
+              className="saved-item-button"
+              aria-current={selected ? 'true' : undefined}
+              onClick={(e) => { e.stopPropagation(); select(item.id); }}
+            >
+              {item.name}{item.meta && <> {item.meta}</>}
+            </button>
+          )}
+        </td>
+        <td style={{ width: '1px', whiteSpace: 'nowrap' }}>
+          {item.actions}
+          <button className="btn-icon" style={{ padding: '0.2rem' }} title="Move to folder" aria-label={`Move ${item.name} to folder`} onClick={(e) => { e.stopPropagation(); setMovingId(item.id); }}>
+            {MOVE_ICON}
+          </button>
+          <button className="btn-icon" style={{ padding: '0.2rem' }} title="Rename" aria-label={`Rename ${item.name}`} onClick={(e) => { e.stopPropagation(); setRenamingId(item.id); setRenameValue(item.name); }}>
+            {EDIT_ICON}
+          </button>
+          <button className="btn-icon" style={{ padding: '0.2rem', color: 'var(--danger-color)' }} title="Delete" aria-label={`Delete ${item.name}`} onClick={(e) => { e.stopPropagation(); onDelete(item.id); }}>
+            {trashIcon()}
+          </button>
+        </td>
+      </tr>
+    );
+  };
+
   return (
     <div className="card">
       {isMobile ? (
@@ -77,59 +146,36 @@ export default function SavedList({ title, items, selectedId, onSelect, onRename
       )}
       <div className="saved-designs-scroll" style={{ maxHeight: 'none' }} hidden={hidden}>
         <table className="table saved-designs-table">
-          <tbody>
-            {items.map((item) => {
-              const selected = selectedId === item.id;
-              return (
-                <tr
-                  key={item.id}
-                  style={{ cursor: 'pointer', backgroundColor: selected ? 'var(--bg-tertiary)' : undefined, borderLeft: selected ? '3px solid var(--primary-color)' : '3px solid transparent' }}
-                  onClick={() => select(item.id)}
-                >
-                  <td style={{ fontWeight: selected ? 600 : 400 }}>
-                    {renamingId === item.id ? (
-                      <input
-                        className="form-input"
-                        style={{ padding: '0.2rem 0.4rem', fontSize: '0.8rem', width: '100%' }}
-                        aria-label={`Rename ${item.name}`}
-                        value={renameValue}
-                        onChange={(e) => setRenameValue(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') finishRename(item.id);
-                          if (e.key === 'Escape') setRenamingId(null);
-                        }}
-                        onBlur={() => finishRename(item.id)}
-                        onClick={(e) => e.stopPropagation()}
-                        autoFocus
-                      />
-                    ) : (
-                      // Real button so the row is reachable and activatable from the keyboard;
-                      // the row's onClick still handles mouse clicks anywhere in the row
-                      <button
-                        type="button"
-                        className="saved-item-button"
-                        aria-current={selected ? 'true' : undefined}
-                        onClick={(e) => { e.stopPropagation(); select(item.id); }}
-                      >
-                        {item.name}{item.meta && <> {item.meta}</>}
-                      </button>
-                    )}
-                  </td>
-                  <td style={{ width: '1px', whiteSpace: 'nowrap' }}>
-                    {item.actions}
-                    <button className="btn-icon" style={{ padding: '0.2rem' }} title="Rename" aria-label={`Rename ${item.name}`} onClick={(e) => { e.stopPropagation(); setRenamingId(item.id); setRenameValue(item.name); }}>
-                      {EDIT_ICON}
-                    </button>
-                    <button className="btn-icon" style={{ padding: '0.2rem', color: 'var(--danger-color)' }} title="Delete" aria-label={`Delete ${item.name}`} onClick={(e) => { e.stopPropagation(); onDelete(item.id); }}>
-                      {trashIcon()}
-                    </button>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
+          {groups.map((group) => {
+            const key = groupKey(group.folder);
+            const groupCollapsed = showFolders && isCollapsed(key);
+            return (
+              <tbody key={key} className={showFolders && group.folder !== null ? 'folder-group' : undefined}>
+                {showFolders && (
+                  <FolderHeaderRow
+                    folder={group.folder}
+                    count={group.items.length}
+                    collapsed={groupCollapsed}
+                    onToggle={() => toggle(key)}
+                    colSpan={2}
+                    controls={folders}
+                  />
+                )}
+                {!groupCollapsed && group.items.map(renderRow)}
+              </tbody>
+            );
+          })}
         </table>
       </div>
+      {movingItem && (
+        <MoveToFolderModal
+          itemName={movingItem.name}
+          current={movingItem.folder}
+          folders={folders.names}
+          onMove={async (folder) => { await onMove(movingItem.id, folder); setMovingId(null); }}
+          onClose={() => setMovingId(null)}
+        />
+      )}
     </div>
   );
 }

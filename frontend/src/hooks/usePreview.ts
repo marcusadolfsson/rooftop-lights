@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { previewAPI } from '../utils/api';
-import type { RGBW } from '../types';
+import type { PlaylistItemInput, RGBW } from '../types';
 
 export interface EffectPreviewData {
   effectType: string;
@@ -13,7 +13,10 @@ export interface EffectPreviewData {
 export type PreviewRequest =
   | { kind: 'static'; colors: Record<number, RGBW> }
   | ({ kind: 'effect' } & EffectPreviewData)
-  | { kind: 'playlist'; playlistId: string };
+  | { kind: 'playlist'; playlistId: string }
+  // The scene / playlist editor's current (possibly unsaved) contents, from item startIndex on.
+  // playlistId is the playlist being edited, when it is saved.
+  | { kind: 'playlistItems'; items: PlaylistItemInput[]; playMode: 'sequence' | 'random'; startIndex: number; playlistId?: string };
 
 interface QueueItem {
   run: () => Promise<unknown>;
@@ -70,8 +73,9 @@ function sendRequest(req: PreviewRequest, live: boolean) {
       return previewAPI.previewEffect({ ...data, live });
     }
     case 'playlist':
-      // Playlist preview is always live on the backend
-      return previewAPI.startPlaylist(req.playlistId);
+      return previewAPI.startPlaylist({ playlistId: req.playlistId, live });
+    case 'playlistItems':
+      return previewAPI.startPlaylist({ playlistId: req.playlistId, items: req.items, play_mode: req.playMode, startIndex: req.startIndex, live });
   }
 }
 
@@ -81,6 +85,8 @@ export interface PreviewControls {
   /** Preview on the WebSocket; also on the physical lights if live preview is on (or `live` says so). */
   send: (req: PreviewRequest, live?: boolean) => void;
   stop: () => void;
+  /** Drop the WebSocket-only preview (the schedule, or live preview, shows through again). */
+  clearSoft: () => void;
   toggleLive: (current: PreviewRequest | null) => Promise<void>;
 }
 
@@ -123,6 +129,10 @@ export function usePreview({ isVisible, onError }: { isVisible: boolean; onError
     queue.push(() => previewAPI.stop(), false).catch((err) => report(err, 'Failed to stop preview'));
   }, [queue, report, setLive]);
 
+  const clearSoft = useCallback(() => {
+    queue.push(() => previewAPI.clearSoft(), false).catch((err) => report(err, 'Failed to clear preview'));
+  }, [queue, report]);
+
   const toggleLive = useCallback(async (current: PreviewRequest | null) => {
     if (isLiveRef.current) {
       setLive(false);
@@ -161,5 +171,5 @@ export function usePreview({ isVisible, onError }: { isVisible: boolean; onError
     }
   }, [isVisible, queue, report, setLive]);
 
-  return useMemo(() => ({ isLive, isLiveRef, send, stop, toggleLive }), [isLive, send, stop, toggleLive]);
+  return useMemo(() => ({ isLive, isLiveRef, send, stop, clearSoft, toggleLive }), [isLive, send, stop, clearSoft, toggleLive]);
 }

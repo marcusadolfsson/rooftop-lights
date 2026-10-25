@@ -4,6 +4,7 @@ import { rgbwToCss } from '../../utils/color';
 import { useIsMobile } from '../../hooks/useMediaQuery';
 import ColorPicker from './ColorPicker';
 import SavedList from './SavedList';
+import type { FolderControls } from './Folders';
 import { isPaletteEffect, MAX_PALETTE_COLORS, MIN_PALETTE_COLORS, type MotionEditor } from './editors';
 
 interface MotionPanelProps {
@@ -18,6 +19,8 @@ interface MotionPanelProps {
   onSaveAs: () => void;
   onRenameDesign: (id: string, name: string) => Promise<void>;
   onDeleteDesign: (id: string) => void;
+  onMoveDesign: (id: string, folder: string | null) => Promise<void>;
+  folders: FolderControls;
   onOpenAiGenerator: () => void;
   onOpenAiEditor: () => void;
 }
@@ -33,7 +36,7 @@ const SPEED_MAX = 2;
 
 export default function MotionPanel({
   editor, designs, effectTypes, walls, sidebarHeader, currentColor, setCurrentColor, hasRGBW,
-  onSaveAs, onRenameDesign, onDeleteDesign, onOpenAiGenerator, onOpenAiEditor,
+  onSaveAs, onRenameDesign, onDeleteDesign, onMoveDesign, folders, onOpenAiGenerator, onOpenAiEditor,
 }: MotionPanelProps) {
   const { selectedDesign, effect, colors, speed, scope, params, selectedColorIdx, hasChanges } = editor;
   const isAi = effect?.type === 'ai';
@@ -60,6 +63,9 @@ export default function MotionPanel({
           onSelect={(id) => { const d = designs.find((x) => x.id === id); if (d) pickColor(editor.load(d)); }}
           onRename={onRenameDesign}
           onDelete={onDeleteDesign}
+          scope="motion"
+          folders={folders}
+          onMove={onMoveDesign}
         />
       </div>
 

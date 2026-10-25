@@ -4,6 +4,7 @@ import { rgbwToCss } from '../../utils/color';
 import { useIsMobile } from '../../hooks/useMediaQuery';
 import ColorPicker from './ColorPicker';
 import SavedList from './SavedList';
+import type { FolderControls } from './Folders';
 import type { StaticEditor } from './editors';
 
 interface StaticPanelProps {
@@ -17,11 +18,13 @@ interface StaticPanelProps {
   onSaveAs: () => void;
   onRenameDesign: (id: string, name: string) => Promise<void>;
   onDeleteDesign: (id: string) => void;
+  onMoveDesign: (id: string, folder: string | null) => Promise<void>;
+  folders: FolderControls;
 }
 
 export default function StaticPanel({
   editor, layout, designs, sidebarHeader, currentColor, setCurrentColor, hasRGBW,
-  onSaveAs, onRenameDesign, onDeleteDesign,
+  onSaveAs, onRenameDesign, onDeleteDesign, onMoveDesign, folders,
 }: StaticPanelProps) {
   const { selectedDesign, colors, hasChanges, colorTool } = editor;
   const [selectedLights, setSelectedLights] = useState<Set<number>>(new Set());
@@ -115,6 +118,9 @@ export default function StaticPanel({
           onSelect={(id) => { const d = designs.find((x) => x.id === id); if (d) editor.load(d); }}
           onRename={onRenameDesign}
           onDelete={onDeleteDesign}
+          scope="static"
+          folders={folders}
+          onMove={onMoveDesign}
         />
       </div>
 

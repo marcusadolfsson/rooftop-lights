@@ -51,6 +51,10 @@ A web app for designing, previewing and scheduling shows on architectural RGBW l
 
 Scenes and playlists are the same thing underneath (one `playlists` table with a `kind`), so either can be converted to the other with one click in its list. Items are kept. A playlist can only become a scene if it holds designs only.
 
+In the scene and playlist editors, **Play** plays what is in the editor right now, unsaved edits included, and highlights the item that is playing. Each item also has its own play button that starts from that item and carries on through the rest. It plays in the browser preview only, unless Live Preview is on. The Add picker can be searched, and its rows can be dragged into the list at any position (on phones, tap + to add at the end).
+
+**Folders.** Static and motion designs, scenes and playlists can be filed into folders. Pick a folder or make a new one when you save, or use the folder button on a saved item to move it (Unfiled included). The saved lists, the Add pickers and the Schedule pickers group items by folder, with Unfiled first. A folder is just a label, shared by all four tabs, and exists only while something is in it. Its header collapses (remembered per browser), renames the folder everywhere (renaming onto an existing folder merges them), or deletes it, which moves its items to Unfiled and deletes nothing.
+
 **AI designer.** Describe a show in plain language ("a warm sunset from orange in the west to purple in the east") and Claude creates a new design, modifies an existing one, or writes a custom animation. It knows the layout, the available effects and your saved designs. This feature is optional and only appears when `ANTHROPIC_API_KEY` is set.
 
 ![AI design generator](docs/screenshots/ai-designer.png)
@@ -180,6 +184,7 @@ These protections are built in:
 | Designs | `GET/POST /api/designs`, `GET/PUT/DELETE /api/designs/:id`, `POST /api/designs/:id/copy`, `GET /api/designs/effects/types` |
 | AI | `GET /api/designs/ai/status`, `POST /api/designs/ai/generate` |
 | Playlists & scenes | `GET /api/playlists[?kind=scene\|playlist]`, `POST /api/playlists`, `GET/PUT/DELETE /api/playlists/:id`, `POST /api/playlists/:id/convert`, `POST /api/playlists/:id/items`, `PUT/DELETE /api/playlists/:id/items/:itemId`, `POST /api/playlists/:id/reorder` |
+| Folders | `GET /api/folders` (names with counts per kind), `PUT /api/folders/:name` `{ name }` (rename or merge), `DELETE /api/folders/:name` (unfile); designs and playlists take `folder` on POST/PUT |
 | Schedules | `GET/POST /api/schedules`, `PUT/DELETE /api/schedules/:id`, `GET/POST /api/schedules/default`, `GET /api/schedules/active` |
 | Preview | `GET /api/preview/status`, `POST /api/preview/start`, `/effect`, `/playlist`, `/lights`, `/stop`, `/clear-soft` |
 | ArtNet | `GET/PUT /api/artnet/config`, `GET /api/artnet/status`, `POST /api/artnet/test` |

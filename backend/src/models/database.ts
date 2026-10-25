@@ -144,6 +144,7 @@ function initializeTables(): void {
       name TEXT NOT NULL,
       type TEXT NOT NULL,
       data TEXT NOT NULL,
+      folder TEXT DEFAULT NULL,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT DEFAULT CURRENT_TIMESTAMP
     )
@@ -156,6 +157,7 @@ function initializeTables(): void {
       name TEXT NOT NULL,
       play_mode TEXT DEFAULT 'sequence',
       kind TEXT NOT NULL DEFAULT 'playlist' CHECK (kind IN ('playlist', 'scene')),
+      folder TEXT DEFAULT NULL,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT DEFAULT CURRENT_TIMESTAMP
     )
@@ -167,6 +169,16 @@ function initializeTables(): void {
   if (!playlistColumns.some(col => col.name === 'kind')) {
     database.exec("ALTER TABLE playlists ADD COLUMN kind TEXT NOT NULL DEFAULT 'playlist' CHECK (kind IN ('playlist', 'scene'))");
     console.log('Migrated playlists: added kind (existing rows are playlists)');
+  }
+
+  // Migration: folders. A nullable label on designs and playlists/scenes that groups them in the
+  // UI (names shared across both tables); existing rows start unfiled
+  for (const table of ['designs', 'playlists']) {
+    const cols = database.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+    if (!cols.some(col => col.name === 'folder')) {
+      database.exec(`ALTER TABLE ${table} ADD COLUMN folder TEXT DEFAULT NULL`);
+      console.log(`Migrated ${table}: added folder (existing rows are unfiled)`);
+    }
   }
 
   // Playlist items: each plays a design or another playlist (child_playlist_id), for `duration`

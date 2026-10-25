@@ -6,6 +6,7 @@ import { validateDesign, safeParseJSON } from '../services/designValidation.js';
 import { invalidateSchedule } from '../scheduler/scheduler.js';
 import { STEP_FRAMES, getEffectEngine } from '../services/effectEngine.js';
 import { applyLayoutDefaults } from '../services/layoutDefaults.js';
+import { parseFolderField } from '../services/folders.js';
 
 const router = Router();
 
@@ -65,7 +66,7 @@ router.get('/:id', (req: Request, res: Response) => {
 // Create a new design
 router.post('/', (req: Request, res: Response) => {
   const db = getDatabase();
-  const { name, type, data } = req.body ?? {};
+  const { name, type, data, folder: rawFolder = null } = req.body ?? {};
 
   const nameError = validateName(name);
   if (nameError) {
@@ -77,27 +78,47 @@ router.post('/', (req: Request, res: Response) => {
     res.status(400).json({ error: check.error });
     return;
   }
+  const folder = parseFolderField(rawFolder);
+  if ('error' in folder) {
+    res.status(400).json({ error: folder.error });
+    return;
+  }
 
   const id = uuidv4();
 
   db.prepare(`
-    INSERT INTO designs (id, name, type, data, created_at, updated_at)
-    VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))
-  `).run(id, name, type, JSON.stringify(data));
+    INSERT INTO designs (id, name, type, data, folder, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+  `).run(id, name, type, JSON.stringify(data), folder.folder);
 
   invalidateSchedule();
-  res.json({ id, name, type, data });
+  res.json({ id, name, type, data, folder: folder.folder });
 });
 
 // Update a design
 router.put('/:id', (req: Request, res: Response) => {
   const db = getDatabase();
   const { id } = req.params;
-  const { name, data } = req.body ?? {};
+  const body = req.body ?? {};
+  const { name, data } = body;
 
   const existing = db.prepare('SELECT type FROM designs WHERE id = ?').get(id) as { type: string } | undefined;
   if (!existing) {
     res.status(404).json({ error: 'Design not found' });
+    return;
+  }
+
+  // folder is optional: not sent keeps the current one. Sent on its own ({ folder }) it only moves
+  // the design, so the list's "Move to folder" works even for a design whose data is corrupt.
+  const folder = body.folder === undefined ? null : parseFolderField(body.folder);
+  if (folder && 'error' in folder) {
+    res.status(400).json({ error: folder.error });
+    return;
+  }
+  if (folder && Object.keys(body).every((key) => key === 'folder')) {
+    db.prepare('UPDATE designs SET folder = ? WHERE id = ?').run(folder.folder, id);
+    invalidateSchedule();
+    res.json({ success: true, folder: folder.folder });
     return;
   }
 
@@ -113,9 +134,9 @@ router.put('/:id', (req: Request, res: Response) => {
   }
 
   db.prepare(`
-    UPDATE designs SET name = ?, data = ?, updated_at = datetime('now')
+    UPDATE designs SET name = ?, data = ?, folder = CASE WHEN ? THEN ? ELSE folder END, updated_at = datetime('now')
     WHERE id = ?
-  `).run(name, JSON.stringify(data), id);
+  `).run(name, JSON.stringify(data), folder ? 1 : 0, folder ? folder.folder : null, id);
 
   invalidateSchedule();
   res.json({ success: true });
@@ -125,7 +146,7 @@ router.put('/:id', (req: Request, res: Response) => {
 router.post('/:id/copy', (req: Request, res: Response) => {
   const db = getDatabase();
   const { id } = req.params;
-  const { name } = req.body;
+  const { name, folder: rawFolder } = req.body ?? {};
 
   const original = db.prepare('SELECT * FROM designs WHERE id = ?').get(id) as any;
 
@@ -133,18 +154,24 @@ router.post('/:id/copy', (req: Request, res: Response) => {
     res.status(404).json({ error: 'Design not found' });
     return;
   }
+  // The copy lands in the original's folder unless another (or null for unfiled) is sent
+  const folder = rawFolder === undefined ? { folder: original.folder ?? null } : parseFolderField(rawFolder);
+  if ('error' in folder) {
+    res.status(400).json({ error: folder.error });
+    return;
+  }
 
   const newId = uuidv4();
   const copyName = typeof name === 'string' && name.trim() ? name.slice(0, MAX_NAME_LENGTH) : `${original.name} (copy)`;
 
   db.prepare(`
-    INSERT INTO designs (id, name, type, data, created_at, updated_at)
-    VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))
-  `).run(newId, copyName, original.type, original.data);
+    INSERT INTO designs (id, name, type, data, folder, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+  `).run(newId, copyName, original.type, original.data, folder.folder);
 
   invalidateSchedule();
   res.json({
-    ...parseRow({ id: newId, name: copyName, type: original.type, data: original.data }),
+    ...parseRow({ id: newId, name: copyName, type: original.type, data: original.data, folder: folder.folder }),
   });
 });
 

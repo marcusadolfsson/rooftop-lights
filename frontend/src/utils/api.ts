@@ -13,9 +13,19 @@ import type {
   StaticDesignData,
   MotionDesignData,
   RGBW,
+  FolderSummary,
 } from '../types';
 
 const API_BASE = '/api';
+
+/** Where a playing playlist is: top-level item index, frames into it, and the design showing. */
+export interface PlaylistPosition {
+  itemIndex: number;
+  itemFrame: number;
+  itemFrames: number;
+  designId: string;
+  designFrame: number;
+}
 
 async function fetchJSON<T>(url: string, options?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${url}`, {
@@ -107,16 +117,23 @@ export const designsAPI = {
 
   get: (id: string) => fetchJSON<Design>(`/designs/${id}`),
 
-  create: (data: { name: string; type: string; data: StaticDesignData | MotionDesignData }) =>
+  create: (data: { name: string; type: string; data: StaticDesignData | MotionDesignData; folder?: string | null }) =>
     fetchJSON<Design>('/designs', {
       method: 'POST',
       body: JSON.stringify(data),
     }),
 
-  update: (id: string, data: { name: string; data: StaticDesignData | MotionDesignData }) =>
+  update: (id: string, data: { name: string; data: StaticDesignData | MotionDesignData; folder?: string | null }) =>
     fetchJSON<{ success: boolean }>(`/designs/${id}`, {
       method: 'PUT',
       body: JSON.stringify(data),
+    }),
+
+  // Only changes the folder (null: unfiled)
+  move: (id: string, folder: string | null) =>
+    fetchJSON<{ success: boolean; folder: string | null }>(`/designs/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify({ folder }),
     }),
 
   copy: (id: string, name?: string) =>
@@ -140,16 +157,23 @@ export const playlistsAPI = {
 
   get: (id: string) => fetchJSON<Playlist>(`/playlists/${id}`),
 
-  create: (data: { name: string; play_mode?: string; kind?: PlaylistKind; items?: PlaylistItemInput[] }) =>
+  create: (data: { name: string; play_mode?: string; kind?: PlaylistKind; items?: PlaylistItemInput[]; folder?: string | null }) =>
     fetchJSON<Playlist>('/playlists', {
       method: 'POST',
       body: JSON.stringify(data),
     }),
 
-  update: (id: string, data: { name: string; play_mode: string; kind?: PlaylistKind; items?: PlaylistItemInput[] }) =>
+  update: (id: string, data: { name: string; play_mode: string; kind?: PlaylistKind; items?: PlaylistItemInput[]; folder?: string | null }) =>
     fetchJSON<{ success: boolean }>(`/playlists/${id}`, {
       method: 'PUT',
       body: JSON.stringify(data),
+    }),
+
+  // Only changes the folder (null: unfiled)
+  move: (id: string, folder: string | null) =>
+    fetchJSON<{ success: boolean; folder: string | null }>(`/playlists/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify({ folder }),
     }),
 
   // Items stay; a playlist can only become a scene when it holds designs only
@@ -179,6 +203,24 @@ export const playlistsAPI = {
     fetchJSON<{ success: boolean }>(`/playlists/${playlistId}/reorder`, {
       method: 'POST',
       body: JSON.stringify({ itemIds }),
+    }),
+};
+
+// Folders: labels shared by designs, scenes and playlists
+export const foldersAPI = {
+  getAll: () => fetchJSON<FolderSummary[]>('/folders'),
+
+  // Renaming onto an existing folder merges the two
+  rename: (name: string, newName: string) =>
+    fetchJSON<{ name: string; merged: boolean; moved: number }>(`/folders/${encodeURIComponent(name)}`, {
+      method: 'PUT',
+      body: JSON.stringify({ name: newName }),
+    }),
+
+  // Everything in it becomes unfiled
+  delete: (name: string) =>
+    fetchJSON<{ success: boolean; moved: number }>(`/folders/${encodeURIComponent(name)}`, {
+      method: 'DELETE',
     }),
 };
 
@@ -280,7 +322,13 @@ export const aiAPI = {
 
 // Preview API
 export const previewAPI = {
-  getStatus: () => fetchJSON<{ isLivePreview: boolean; hasPreview: boolean; livePreviewInfo: { type: string; effectType?: string; playlist?: { itemIndex: number; itemFrame: number; itemFrames: number; designId: string; designFrame: number } | null } | null }>('/preview/status'),
+  // previewInfo (newer backends): what the preview shows, live or WebSocket-only
+  getStatus: () => fetchJSON<{
+    isLivePreview: boolean;
+    hasPreview: boolean;
+    livePreviewInfo: { type: string; effectType?: string; playlist?: PlaylistPosition | null } | null;
+    previewInfo?: { type: string; live: boolean; playlist?: PlaylistPosition | null } | null;
+  }>('/preview/status'),
 
   start: (data: { designId?: string; designType?: string; designData?: unknown; live?: boolean }) =>
     fetchJSON<{ success: boolean }>('/preview/start', {
@@ -288,10 +336,12 @@ export const previewAPI = {
       body: JSON.stringify(data),
     }),
 
-  startPlaylist: (playlistId: string) =>
+  // A saved playlist (playlistId), or the editor's unsaved items; startIndex starts at that item.
+  // live=false previews on the WebSocket only.
+  startPlaylist: (data: { playlistId?: string; items?: PlaylistItemInput[]; play_mode?: string; startIndex?: number; live: boolean }) =>
     fetchJSON<{ success: boolean }>('/preview/playlist', {
       method: 'POST',
-      body: JSON.stringify({ playlistId }),
+      body: JSON.stringify(data),
     }),
 
   stop: () =>

@@ -83,9 +83,9 @@ export function useStaticEditor({ preview, reload, setError, autoPreview }: Edit
     }
   };
 
-  const saveAs = async (name: string): Promise<boolean> => {
+  const saveAs = async (name: string, folder: string | null = null): Promise<boolean> => {
     try {
-      const created = await designsAPI.create({ name, type: 'static', data: designData() });
+      const created = await designsAPI.create({ name, type: 'static', data: designData(), folder });
       // Select the copy so the next Save updates it, not the original
       setSelectedDesign(created);
       setSavedJson(JSON.stringify(colors));
@@ -302,11 +302,11 @@ export function useMotionEditor({ preview, reload, setError, autoPreview, effect
     }
   };
 
-  const saveAs = async (name: string): Promise<boolean> => {
+  const saveAs = async (name: string, folder: string | null = null): Promise<boolean> => {
     const data = designData();
     if (!data) return false;
     try {
-      const created = await designsAPI.create({ name, type: 'motion', data });
+      const created = await designsAPI.create({ name, type: 'motion', data, folder });
       // Select the copy so the next Save updates it, not the original
       setSelectedDesign(created);
       setSavedJson(motionSnapshot(state));
@@ -472,11 +472,19 @@ export function usePlaylistEditor({ reload, setError, designs, playlists, kind }
 
   // In a scene a design plays one complete cycle when it has one; otherwise (and in playlists)
   // it plays for 10 seconds
-  const addDesign = (designId: string) => {
+  // `at` inserts at that position (dropped from the picker); otherwise the item is appended
+  const insertAt = (item: EditingPlaylistItem, at?: number) => {
+    setItems((prev) => {
+      if (at === undefined || at < 0 || at >= prev.length) return [...prev, item];
+      return [...prev.slice(0, at), item, ...prev.slice(at)];
+    });
+  };
+
+  const addDesign = (designId: string, at?: number) => {
     const design = designs.find((d) => d.id === designId);
     if (!design) return;
     const once = isScene && designCycle(designId) !== null;
-    setItems((prev) => [...prev, {
+    insertAt({
       key: newItemKey(),
       design_id: designId,
       child_playlist_id: null,
@@ -486,14 +494,14 @@ export function usePlaylistEditor({ reload, setError, designs, playlists, kind }
       repeat_mode: once ? 'times' : 'seconds',
       repeat_count: 1,
       transition: 'cut',
-    }]);
+    }, at);
   };
 
   // Nested playlists and scenes default to playing through once
-  const addPlaylist = (playlistId: string) => {
+  const addPlaylist = (playlistId: string, at?: number) => {
     const playlist = playlists.find((p) => p.id === playlistId);
     if (!playlist || !canAddPlaylist(playlistId)) return;
-    setItems((prev) => [...prev, {
+    insertAt({
       key: newItemKey(),
       design_id: null,
       child_playlist_id: playlistId,
@@ -502,7 +510,7 @@ export function usePlaylistEditor({ reload, setError, designs, playlists, kind }
       repeat_mode: 'times',
       repeat_count: 1,
       transition: 'cut',
-    }]);
+    }, at);
   };
 
   /**
@@ -549,7 +557,7 @@ export function usePlaylistEditor({ reload, setError, designs, playlists, kind }
   }));
 
   /** Saves; returns 'needs-name' for a new playlist/scene without a name. */
-  const save = async (nameOverride?: string): Promise<'saved' | 'needs-name' | 'failed'> => {
+  const save = async (nameOverride?: string, folder: string | null = null): Promise<'saved' | 'needs-name' | 'failed'> => {
     if (items.length === 0) return 'failed';
     try {
       if (selectedPlaylist) {
@@ -562,7 +570,7 @@ export function usePlaylistEditor({ reload, setError, designs, playlists, kind }
       } else {
         const newName = nameOverride?.trim();
         if (!newName) return 'needs-name';
-        const created = await playlistsAPI.create({ name: newName, play_mode: isScene ? 'sequence' : mode, kind, items: payloadItems() });
+        const created = await playlistsAPI.create({ name: newName, play_mode: isScene ? 'sequence' : mode, kind, items: payloadItems(), folder });
         setSelectedPlaylist(created);
         setName(newName);
       }
@@ -633,7 +641,7 @@ export function usePlaylistEditor({ reload, setError, designs, playlists, kind }
   return {
     kind, isScene, noun, saved,
     selectedPlaylist, name, setName, items, mode, setMode, dragKey,
-    addablePlaylists, cycleSeconds, effectiveMode, itemSeconds, totalSeconds,
+    addablePlaylists, cycleSeconds, effectiveMode, itemSeconds, totalSeconds, payloadItems,
     startNew, load, addDesign, addPlaylist, removeItem, updateItem, save, remove, rename, dragStart, dragOver, dragEnd, moveItem,
   };
 }

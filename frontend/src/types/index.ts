@@ -44,6 +44,8 @@ export interface Design {
   // Motion designs: seconds per complete effect cycle ("play X times" counts these); null when
   // the effect has no natural cycle (random effects, AI code)
   cycleSeconds?: number | null;
+  // Folder label it's grouped under (null/missing: unfiled). Shared with playlists and scenes.
+  folder?: string | null;
   created_at?: string;
   updated_at?: string;
 }
@@ -101,8 +103,17 @@ export interface Playlist {
   items: PlaylistItem[];
   // One pass in order (sequence) or one round of every item (random)
   totalSeconds?: number;
+  // Folder label it's grouped under (null/missing: unfiled). Shared with designs.
+  folder?: string | null;
   created_at?: string;
   updated_at?: string;
+}
+
+/** A folder and how many of each kind it holds (GET /api/folders). */
+export interface FolderSummary {
+  name: string;
+  counts: { static: number; motion: number; scene: number; playlist: number };
+  total: number;
 }
 
 export type RepeatMode = 'seconds' | 'times';

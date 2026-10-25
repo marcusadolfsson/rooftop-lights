@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
-import { getScheduler } from '../scheduler/scheduler.js';
+import { getScheduler, PlaylistPreviewData } from '../scheduler/scheduler.js';
+import type { TimelineItemRow } from '../services/playlistTimeline.js';
 import { getDatabase } from '../models/database.js';
 import { validateDesign, validateMotionData, safeParseJSON } from '../services/designValidation.js';
 
@@ -13,6 +14,8 @@ router.get('/status', (req: Request, res: Response) => {
     isLivePreview: scheduler.isInLivePreview(),
     hasPreview: scheduler.hasPreviewDesign(),
     livePreviewInfo: scheduler.getLivePreviewInfo(),
+    // What the preview shows (live or WebSocket-only), with the playlist position for playlists
+    previewInfo: scheduler.getPreviewInfo(),
   });
 });
 
@@ -66,31 +69,105 @@ router.post('/start', (req: Request, res: Response) => {
   res.json({ success: true, message: live ? 'Live preview started' : 'Preview started' });
 });
 
-// Start live preview of a playlist
+const MAX_PREVIEW_ITEMS = 500;
+const MAX_DURATION_SECONDS = 7 * 24 * 3600;
+const MAX_REPEAT_COUNT = 1000;
+
+/** Validate the editor's unsaved items (same shape as playlist items; ids aren't needed). */
+function parsePreviewItems(raw: unknown): { items: TimelineItemRow[] } | { error: string } {
+  if (!Array.isArray(raw)) return { error: 'items must be an array' };
+  if (raw.length > MAX_PREVIEW_ITEMS) return { error: `items: at most ${MAX_PREVIEW_ITEMS} items` };
+  const items: TimelineItemRow[] = [];
+  for (let i = 0; i < raw.length; i++) {
+    const item = raw[i] as Record<string, unknown> | null;
+    const where = `items[${i}]`;
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return { error: `${where} must be an object` };
+    const designId = item.design_id ?? null;
+    const childId = item.child_playlist_id ?? null;
+    if ((designId === null) === (childId === null)) return { error: `${where}: set exactly one of design_id or child_playlist_id` };
+    if ((designId !== null && typeof designId !== 'string') || (childId !== null && typeof childId !== 'string')) {
+      return { error: `${where}: design_id / child_playlist_id must be a string` };
+    }
+    const repeatMode = item.repeat_mode ?? 'seconds';
+    if (repeatMode !== 'seconds' && repeatMode !== 'times') return { error: `${where}: repeat_mode must be "seconds" or "times"` };
+    const repeatCount = item.repeat_count ?? 1;
+    if (!Number.isInteger(repeatCount) || (repeatCount as number) < 1 || (repeatCount as number) > MAX_REPEAT_COUNT) {
+      return { error: `${where}: repeat_count must be a whole number from 1 to ${MAX_REPEAT_COUNT}` };
+    }
+    const duration = item.duration ?? 10;
+    if (typeof duration !== 'number' || !Number.isFinite(duration) || duration < 1 || duration > MAX_DURATION_SECONDS) {
+      return { error: `${where}: duration must be a number of seconds from 1 to ${MAX_DURATION_SECONDS}` };
+    }
+    items.push({
+      id: `item${i}`,
+      design_id: designId as string | null,
+      child_playlist_id: childId as string | null,
+      duration,
+      repeat_mode: repeatMode,
+      repeat_count: repeatCount as number,
+    });
+  }
+  return { items };
+}
+
+// Preview a playlist or scene: a saved one ({ playlistId }), or the editor's current, possibly
+// unsaved contents ({ items, play_mode, playlistId? }). startIndex starts playback at that item
+// (then it continues and loops as usual). live=true (the default, for older clients) also sends
+// it to ArtNet; live=false is WebSocket only.
 router.post('/playlist', (req: Request, res: Response) => {
   const db = getDatabase();
   const scheduler = getScheduler();
-  const { playlistId } = req.body ?? {};
+  const { playlistId, items, play_mode: playMode = 'sequence', startIndex, live = true } = req.body ?? {};
 
-  if (typeof playlistId !== 'string' || !playlistId) {
-    res.status(400).json({ error: 'playlistId is required' });
+  if (playlistId !== undefined && (typeof playlistId !== 'string' || !playlistId)) {
+    res.status(400).json({ error: 'playlistId must be a playlist id' });
+    return;
+  }
+  if (startIndex !== undefined && (!Number.isInteger(startIndex) || startIndex < 0)) {
+    res.status(400).json({ error: 'startIndex must be a non-negative integer' });
+    return;
+  }
+  if (typeof live !== 'boolean') {
+    res.status(400).json({ error: 'live must be true or false' });
     return;
   }
 
-  const playlist = db.prepare('SELECT * FROM playlists WHERE id = ?').get(playlistId) as any;
-
-  if (!playlist) {
-    res.status(404).json({ error: 'Playlist not found' });
-    return;
+  const data: PlaylistPreviewData = { startAt: startIndex };
+  if (items !== undefined) {
+    const parsed = parsePreviewItems(items);
+    if ('error' in parsed) {
+      res.status(400).json({ error: parsed.error });
+      return;
+    }
+    if (playMode !== 'sequence' && playMode !== 'random') {
+      res.status(400).json({ error: 'play_mode must be "sequence" or "random"' });
+      return;
+    }
+    data.items = parsed.items;
+    data.playMode = playMode;
+    // The playlist being edited, if saved (nested items can't loop back into it)
+    if (playlistId) data.playlistId = playlistId;
+  } else {
+    if (!playlistId) {
+      res.status(400).json({ error: 'playlistId or items is required' });
+      return;
+    }
+    if (!db.prepare('SELECT 1 FROM playlists WHERE id = ?').get(playlistId)) {
+      res.status(404).json({ error: 'Playlist not found' });
+      return;
+    }
+    data.playlistId = playlistId;
   }
 
   // Rendered by the scheduler's playlist player (renderDesign 'playlist' branch)
-  scheduler.setLivePreview(true, {
-    type: 'playlist',
-    data: { playlistId },
-  });
+  const design = { type: 'playlist', data };
+  if (live) {
+    scheduler.setLivePreview(true, design);
+  } else {
+    scheduler.setPreviewDesign(design);
+  }
 
-  res.json({ success: true, message: 'Playlist preview started' });
+  res.json({ success: true, message: live ? 'Playlist preview started (live)' : 'Playlist preview started' });
 });
 
 // Stop live preview (return to scheduled)

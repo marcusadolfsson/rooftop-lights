@@ -59,6 +59,8 @@ export interface PlaylistTimeline {
   playMode: 'sequence' | 'random';
   // One node per top-level item (items that resolve to nothing are left out)
   items: TimelineNode[];
+  // Position in the playlist's own item list of each entry of `items`
+  sourceIndexes: number[];
   // Changes whenever anything that affects playback changes
   signature: string;
 }
@@ -112,12 +114,14 @@ export function buildTimelineItem(item: TimelineItemRow, src: TimelineSource, st
   };
 }
 
-function buildItems(items: TimelineItemRow[], src: TimelineSource, stack: string[], keyPrefix: string): TimelineNode[] {
+function buildItems(items: TimelineItemRow[], src: TimelineSource, stack: string[], keyPrefix: string, sourceIndexes?: number[]): TimelineNode[] {
   const out: TimelineNode[] = [];
-  for (const item of items) {
+  items.forEach((item, index) => {
     const node = buildTimelineItem(item, src, stack, keyPrefix);
-    if (node) out.push(node);
-  }
+    if (!node) return;
+    out.push(node);
+    sourceIndexes?.push(index);
+  });
   return out;
 }
 
@@ -129,9 +133,16 @@ function signatureOf(node: TimelineNode): string {
 export function buildPlaylistTimeline(playlistId: string, src: TimelineSource): PlaylistTimeline | null {
   const playlist = src.playlist(playlistId);
   if (!playlist) return null;
-  const items = buildItems(playlist.items, src, [playlistId], '');
+  const sourceIndexes: number[] = [];
+  const items = buildItems(playlist.items, src, [playlistId], '', sourceIndexes);
   const playMode = playlist.play_mode === 'random' ? 'random' : 'sequence';
-  return { playMode, items, signature: `${playMode}|${items.map(signatureOf).join(',')}` };
+  return { playMode, items, sourceIndexes, signature: `${playMode}|${items.map(signatureOf).join(',')}` };
+}
+
+/** Timeline index to start at so playback begins with item `itemIndex` of the playlist (or the next one that plays). */
+export function timelineStartIndex(timeline: PlaylistTimeline, itemIndex: number): number {
+  const at = timeline.sourceIndexes.findIndex(i => i >= itemIndex);
+  return at < 0 ? 0 : at;
 }
 
 /** Total real frames of one pass (sequence) or one round of every item (random). */

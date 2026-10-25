@@ -4,6 +4,7 @@ import { randomUUID as uuidv4 } from 'crypto';
 import { invalidateSchedule } from '../scheduler/scheduler.js';
 import { getEffectEngine } from '../services/effectEngine.js';
 import { safeParseJSON } from '../services/designValidation.js';
+import { parseFolderField } from '../services/folders.js';
 import {
   buildPlaylistTimeline, buildTimelineItem, nodeFrames, timelineFrames, wouldCreateCycle,
   TIMELINE_FPS, TimelineItemRow, TimelineSource,
@@ -234,7 +235,7 @@ router.get('/:id', (req: Request, res: Response) => {
 // Create a new playlist
 router.post('/', (req: Request, res: Response) => {
   const db = getDatabase();
-  const { name, play_mode: requestedMode = 'sequence', kind = 'playlist', items = [] } = req.body ?? {};
+  const { name, play_mode: requestedMode = 'sequence', kind = 'playlist', items = [], folder: rawFolder = null } = req.body ?? {};
 
   if (typeof name !== 'string' || !name.trim()) {
     res.status(400).json({ error: 'Playlist "name" is required' });
@@ -256,35 +257,54 @@ router.post('/', (req: Request, res: Response) => {
     res.status(400).json({ error: parsed.error });
     return;
   }
+  const folder = parseFolderField(rawFolder);
+  if ('error' in folder) {
+    res.status(400).json({ error: folder.error });
+    return;
+  }
 
   const id = uuidv4();
 
   const insertPlaylist = db.prepare(`
-    INSERT INTO playlists (id, name, play_mode, kind, created_at, updated_at)
-    VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))
+    INSERT INTO playlists (id, name, play_mode, kind, folder, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))
   `);
   const insertItem = db.prepare(INSERT_ITEM_SQL);
 
   db.transaction(() => {
-    insertPlaylist.run(id, name, play_mode, kind);
+    insertPlaylist.run(id, name, play_mode, kind, folder.folder);
     parsed.items.forEach((item, index) => {
       insertItem.run(...insertItemArgs(uuidv4(), id, item, index));
     });
   })();
 
   invalidateSchedule();
-  res.json({ id, name, play_mode, kind, items: parsed.items });
+  res.json({ id, name, play_mode, kind, folder: folder.folder, items: parsed.items });
 });
 
 // Update a playlist
 router.put('/:id', (req: Request, res: Response) => {
   const db = getDatabase();
   const { id } = req.params;
-  const { name, play_mode: requestedMode, kind: requestedKind, items } = req.body ?? {};
+  const body = req.body ?? {};
+  const { name, play_mode: requestedMode, kind: requestedKind, items } = body;
 
   const existing = db.prepare('SELECT id, kind FROM playlists WHERE id = ?').get(id) as { id: string; kind: Kind } | undefined;
   if (!existing) {
     res.status(404).json({ error: 'Playlist not found' });
+    return;
+  }
+  // folder is optional: not sent keeps the current one; sent on its own ({ folder }) it only moves
+  // the playlist to that folder
+  const folder = body.folder === undefined ? null : parseFolderField(body.folder);
+  if (folder && 'error' in folder) {
+    res.status(400).json({ error: folder.error });
+    return;
+  }
+  if (folder && Object.keys(body).every((key) => key === 'folder')) {
+    db.prepare('UPDATE playlists SET folder = ? WHERE id = ?').run(folder.folder, id);
+    invalidateSchedule();
+    res.json({ success: true, folder: folder.folder });
     return;
   }
   if (typeof name !== 'string' || !name.trim()) {
@@ -320,7 +340,7 @@ router.put('/:id', (req: Request, res: Response) => {
   }
 
   const updatePlaylist = db.prepare(`
-    UPDATE playlists SET name = ?, play_mode = ?, kind = ?, updated_at = datetime('now')
+    UPDATE playlists SET name = ?, play_mode = ?, kind = ?, folder = CASE WHEN ? THEN ? ELSE folder END, updated_at = datetime('now')
     WHERE id = ?
   `);
   const deleteItems = db.prepare('DELETE FROM playlist_items WHERE playlist_id = ?');
@@ -328,7 +348,7 @@ router.put('/:id', (req: Request, res: Response) => {
 
   // All-or-nothing: a failure part-way must not leave the playlist half-replaced
   db.transaction(() => {
-    updatePlaylist.run(name, play_mode, kind, id);
+    updatePlaylist.run(name, play_mode, kind, folder ? 1 : 0, folder ? folder.folder : null, id);
     if (parsedItems) {
       deleteItems.run(id);
       parsedItems.forEach((item, index) => {

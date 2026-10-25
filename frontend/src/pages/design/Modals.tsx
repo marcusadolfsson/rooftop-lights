@@ -1,19 +1,24 @@
 import { useState, type ReactNode } from 'react';
 import { useEscapeKey } from '../../hooks/useEscapeKey';
+import { FolderSelect, folderToSave } from './Folders';
 
 interface NameModalProps {
   title: string;
   label: string;
   placeholder: string;
   initialName?: string;
-  onSave: (name: string) => void;
+  // Folder names to pick from; with them the modal also asks which folder to save into
+  folders?: string[];
+  initialFolder?: string | null;
+  onSave: (name: string, folder: string | null) => void;
   onClose: () => void;
 }
 
-/** "Save As" style modal asking for a name. */
-export function NameModal({ title, label, placeholder, initialName = '', onSave, onClose }: NameModalProps) {
+/** "Save As" style modal asking for a name (and, given `folders`, a folder). */
+export function NameModal({ title, label, placeholder, initialName = '', folders, initialFolder, onSave, onClose }: NameModalProps) {
   const [name, setName] = useState(initialName);
-  const submit = () => { if (name.trim()) onSave(name.trim()); };
+  const [folder, setFolder] = useState(initialFolder ?? '');
+  const submit = () => { if (name.trim()) onSave(name.trim(), folders ? folderToSave(folder, folders) : null); };
   useEscapeKey(true, onClose);
 
   return (
@@ -37,6 +42,13 @@ export function NameModal({ title, label, placeholder, initialName = '', onSave,
             autoFocus
           />
         </div>
+
+        {folders && (
+          <div className="form-group">
+            <label className="form-label" htmlFor="name-modal-folder">Folder</label>
+            <FolderSelect id="name-modal-folder" value={folder} onChange={setFolder} folders={folders} onEnter={submit} />
+          </div>
+        )}
 
         <div className="modal-footer">
           <button className="btn btn-secondary" onClick={onClose}>Cancel</button>

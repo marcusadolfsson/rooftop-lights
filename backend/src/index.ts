@@ -19,6 +19,7 @@ import playlistsRoutes from './routes/playlists.js';
 import schedulesRoutes from './routes/schedules.js';
 import artnetRoutes from './routes/artnet.js';
 import previewRoutes from './routes/preview.js';
+import foldersRoutes from './routes/folders.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -86,6 +87,7 @@ app.use('/api/playlists', playlistsRoutes);
 app.use('/api/schedules', schedulesRoutes);
 app.use('/api/artnet', artnetRoutes);
 app.use('/api/preview', previewRoutes);
+app.use('/api/folders', foldersRoutes);
 
 // Health check (unauthenticated, fast, checks DB)
 const startTime = Date.now();

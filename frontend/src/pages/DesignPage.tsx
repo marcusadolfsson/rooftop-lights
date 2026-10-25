@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useLocation } from 'react-router-dom';
-import { layoutAPI, designsAPI, playlistsAPI, aiAPI } from '../utils/api';
+import { layoutAPI, designsAPI, playlistsAPI, aiAPI, foldersAPI, previewAPI } from '../utils/api';
 import { usePreview, type PreviewRequest } from '../hooks/usePreview';
 import LiveLightPreview from '../components/LiveLightPreview';
 import StaticPanel from './design/StaticPanel';
@@ -8,9 +8,15 @@ import MotionPanel from './design/MotionPanel';
 import PlaylistPanel from './design/PlaylistPanel';
 import { AiPromptModal, NameModal } from './design/Modals';
 import { useMotionEditor, usePlaylistEditor, useStaticEditor } from './design/editors';
+import type { FolderControls } from './design/Folders';
+import { canonicalFolder, folderNames, renameCollapsedFolder, sameFolder } from '../utils/folders';
 import type { Design, EffectType, Playlist, PlaylistKind, RGBW, LayoutData } from '../types';
 
 type TabType = 'static' | 'motion' | 'scenes' | 'playlist';
+
+// How often the scene / playlist editor asks which item is playing
+const PLAYBACK_POLL_MS = 500;
+const PLAYBACK_START_GRACE_MS = 2000;
 
 const TABS: { id: TabType; label: string }[] = [
   { id: 'static', label: 'Static' },
@@ -58,7 +64,7 @@ function DesignPage() {
   const previewStripRef = useRef<HTMLDivElement>(null);
 
   // Modals
-  const [saveModal, setSaveModal] = useState<{ initialName: string } | null>(null);
+  const [saveModal, setSaveModal] = useState<{ initialName: string; initialFolder: string | null } | null>(null);
   // Name prompt for a new scene / playlist
   const [playlistSaveModal, setPlaylistSaveModal] = useState<PlaylistKind | null>(null);
   const [pendingSaveName, setPendingSaveName] = useState(''); // prefilled from AI-generated names
@@ -168,20 +174,144 @@ function DesignPage() {
     }
   };
 
-  const openSaveAs = () => setSaveModal({ initialName: pendingSaveName });
+  // Save As starts in the open design's folder
+  const openSaveAs = () => {
+    const editor = activeTab === 'static' ? staticEditor : motionEditor;
+    const current = designs.find((d) => d.id === editor.selectedDesign?.id);
+    setSaveModal({ initialName: pendingSaveName, initialFolder: current?.folder ?? null });
+  };
 
-  const handleSaveAs = async (name: string) => {
+  const handleSaveAs = async (name: string, folder: string | null) => {
     const ok = activeTab === 'static'
-      ? await staticEditor.saveAs(name)
-      : activeTab === 'motion' ? await motionEditor.saveAs(name) : false;
+      ? await staticEditor.saveAs(name, folder)
+      : activeTab === 'motion' ? await motionEditor.saveAs(name, folder) : false;
     if (ok) {
       setSaveModal(null);
       setPendingSaveName('');
     }
   };
 
-  const handleSavePlaylist = async (kind: PlaylistKind, name?: string) => {
-    const result = await editorFor(kind).save(name);
+  // --- folders (labels shared by designs, scenes and playlists) ---
+
+  const allFolders = useMemo(() => folderNames(designs, playlists), [designs, playlists]);
+
+  const handleMoveDesign = async (designId: string, folder: string | null) => {
+    try {
+      await designsAPI.move(designId, folder);
+      await loadData();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to move design');
+    }
+  };
+
+  const handleMovePlaylist = async (playlistId: string, folder: string | null) => {
+    try {
+      await playlistsAPI.move(playlistId, folder);
+      await loadData();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to move to folder');
+    }
+  };
+
+  const folderControls: FolderControls = {
+    names: allFolders,
+    rename: async (from, to) => {
+      const target = canonicalFolder(to, allFolders.filter((f) => !sameFolder(f, from)));
+      const merging = allFolders.some((f) => !sameFolder(f, from) && sameFolder(f, to));
+      if (merging && !confirm(`A folder named "${target}" already exists. Merge "${from}" into it?`)) return;
+      try {
+        const result = await foldersAPI.rename(from, to);
+        renameCollapsedFolder(from, result.name);
+        await loadData();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to rename folder');
+      }
+    },
+    remove: async (name) => {
+      const count = [...designs, ...playlists].filter((x) => x.folder && sameFolder(x.folder, name)).length;
+      if (!confirm(`Delete the folder "${name}"? Its ${count} item${count === 1 ? '' : 's'} (in every tab) move to Unfiled; nothing is deleted.`)) return;
+      try {
+        await foldersAPI.delete(name);
+        await loadData();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to delete folder');
+      }
+    },
+  };
+
+  // --- scene / playlist playback in the preview ---
+
+  // What the scene / playlist editor is playing: the editor's current items from startIndex on.
+  // playingIndex is the item playing now (from the preview status).
+  // startedAt: until the play request has surely landed, a status without it isn't "stopped"
+  const [playback, setPlayback] = useState<{ kind: PlaylistKind; startIndex: number; startedAt: number } | null>(null);
+  const [playingIndex, setPlayingIndex] = useState<number | null>(null);
+  const listKind: PlaylistKind | null = activeTab === 'scenes' ? 'scene' : activeTab === 'playlist' ? 'playlist' : null;
+
+  const playlistItemsRequest = (kind: PlaylistKind, startIndex: number): PreviewRequest | null => {
+    const editor = editorFor(kind);
+    if (editor.items.length === 0) return null;
+    return {
+      kind: 'playlistItems',
+      items: editor.payloadItems(),
+      playMode: kind === 'scene' ? 'sequence' : editor.mode,
+      startIndex,
+      playlistId: editor.selectedPlaylist?.id,
+    };
+  };
+
+  // Soft preview (WebSocket only) unless Live Preview is on, then on the lights too
+  const handlePlay = (kind: PlaylistKind, startIndex: number) => {
+    const req = playlistItemsRequest(kind, startIndex);
+    if (!req) return;
+    preview.send(req);
+    setPlayback({ kind, startIndex, startedAt: Date.now() });
+    setPlayingIndex(startIndex);
+  };
+
+  const handleStopPlayback = () => {
+    setPlayback(null);
+    setPlayingIndex(null);
+    if (preview.isLiveRef.current) preview.stop();
+    else preview.clearSoft();
+  };
+
+  // Leaving the tab or the page ends the editor's playback (live preview keeps running)
+  useEffect(() => {
+    if (!playback) return;
+    if (!isVisible || listKind !== playback.kind) {
+      if (!preview.isLiveRef.current) preview.clearSoft();
+      setPlayback(null);
+      setPlayingIndex(null);
+    }
+  }, [isVisible, listKind, playback, preview]);
+
+  // Follow which item is playing; stop showing playback once the preview is gone
+  useEffect(() => {
+    if (!playback) return;
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const status = await previewAPI.getStatus();
+        if (cancelled) return;
+        const info = status.previewInfo ?? (status.livePreviewInfo ? { ...status.livePreviewInfo, live: true } : null);
+        if (!info || info.type !== 'playlist') {
+          if (Date.now() - playback.startedAt < PLAYBACK_START_GRACE_MS) return;
+          setPlayback(null);
+          setPlayingIndex(null);
+          return;
+        }
+        if (info.playlist) setPlayingIndex(info.playlist.itemIndex);
+      } catch {
+        /* transient; try again on the next tick */
+      }
+    };
+    const interval = setInterval(poll, PLAYBACK_POLL_MS);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [playback]);
+
+  const handleSavePlaylist = async (kind: PlaylistKind, name?: string, folder: string | null = null) => {
+    const result = await editorFor(kind).save(name, folder);
     if (result === 'needs-name') setPlaylistSaveModal(kind);
     if (result === 'saved') setPlaylistSaveModal(null);
   };
@@ -209,11 +339,25 @@ function DesignPage() {
       const { effect, colors, params, speed, scope } = motionEditor;
       return { kind: 'effect', effectType: effect.type, colors, params, speed, scope };
     }
-    const listEditor = activeTab === 'scenes' ? sceneEditor : activeTab === 'playlist' ? playlistEditor : null;
-    if (listEditor?.selectedPlaylist) {
-      return { kind: 'playlist', playlistId: listEditor.selectedPlaylist.id };
-    }
+    // Scenes / playlists: what the editor holds now (unsaved edits included), from where it's playing
+    if (listKind) return playlistItemsRequest(listKind, playback?.kind === listKind ? playback.startIndex : 0);
     return null;
+  };
+
+  // Turning Live Preview on in the scene / playlist editor plays its contents; off stops them
+  const handleToggleLive = async () => {
+    const wasLive = preview.isLiveRef.current;
+    const req = currentPreviewRequest();
+    await preview.toggleLive(req);
+    if (!listKind) return;
+    if (wasLive) {
+      setPlayback(null);
+      setPlayingIndex(null);
+    } else if (req && preview.isLiveRef.current) {
+      const startIndex = req.kind === 'playlistItems' ? req.startIndex : 0;
+      setPlayback({ kind: listKind, startIndex, startedAt: Date.now() });
+      setPlayingIndex(startIndex);
+    }
   };
 
   const toggleShowDefective = () => {
@@ -384,7 +528,7 @@ function DesignPage() {
                   aria-checked={preview.isLive}
                   aria-labelledby="toggle-live-preview"
                   className={`toggle-switch ${preview.isLive ? 'active' : ''}`}
-                  onClick={() => preview.toggleLive(currentPreviewRequest())}
+                  onClick={handleToggleLive}
                 />
               </div>
             </div>
@@ -481,6 +625,8 @@ function DesignPage() {
           onSaveAs={openSaveAs}
           onRenameDesign={handleRenameDesign}
           onDeleteDesign={handleDeleteDesign}
+          onMoveDesign={handleMoveDesign}
+          folders={folderControls}
         />
       )}
 
@@ -497,6 +643,8 @@ function DesignPage() {
           onSaveAs={openSaveAs}
           onRenameDesign={handleRenameDesign}
           onDeleteDesign={handleDeleteDesign}
+          onMoveDesign={handleMoveDesign}
+          folders={folderControls}
           onOpenAiGenerator={() => setShowAiPanel(true)}
           onOpenAiEditor={openAiEditor}
         />
@@ -512,6 +660,12 @@ function DesignPage() {
           sidebarHeader={sidebarHeader}
           onSave={() => handleSavePlaylist(activeTab === 'scenes' ? 'scene' : 'playlist')}
           onConvert={handleConvert}
+          onMove={handleMovePlaylist}
+          folders={folderControls}
+          isPlaying={playback?.kind === listKind}
+          playingIndex={playback?.kind === listKind ? playingIndex : null}
+          onPlay={(startIndex) => handlePlay(activeTab === 'scenes' ? 'scene' : 'playlist', startIndex)}
+          onStop={handleStopPlayback}
         />
       )}
 
@@ -521,6 +675,8 @@ function DesignPage() {
           label="Design Name"
           placeholder="Enter design name"
           initialName={saveModal.initialName}
+          folders={allFolders}
+          initialFolder={saveModal.initialFolder}
           onSave={handleSaveAs}
           onClose={() => setSaveModal(null)}
         />
@@ -531,7 +687,8 @@ function DesignPage() {
           title={playlistSaveModal === 'scene' ? 'Save Scene' : 'Save Playlist'}
           label={playlistSaveModal === 'scene' ? 'Scene Name' : 'Playlist Name'}
           placeholder={`Enter ${playlistSaveModal} name`}
-          onSave={(name) => handleSavePlaylist(playlistSaveModal, name)}
+          folders={allFolders}
+          onSave={(name, folder) => handleSavePlaylist(playlistSaveModal, name, folder)}
           onClose={() => setPlaylistSaveModal(null)}
         />
       )}
