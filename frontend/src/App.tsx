@@ -1,11 +1,24 @@
-import { Routes, Route, NavLink } from 'react-router-dom';
-import { useWebSocket } from './hooks/useWebSocket';
+import { NavLink, useLocation } from 'react-router-dom';
+import { useConnectionStatus } from './hooks/useLightSocket';
 import LayoutPage from './pages/LayoutPage';
 import DesignPage from './pages/DesignPage';
 import SchedulerPage from './pages/SchedulerPage';
 
+// Own component so status updates (dmxRate) don't re-render the pages
+function ConnectionIndicator() {
+  const { connected, dmxRate } = useConnectionStatus();
+  return (
+    <div className="status-indicator">
+      <span
+        className={`status-dot ${connected ? 'connected' : 'disconnected'}`}
+      />
+      <span>{connected ? `DMX ${dmxRate} pkt/s` : 'Disconnected'}</span>
+    </div>
+  );
+}
+
 function App() {
-  const { connected } = useWebSocket();
+  const location = useLocation();
 
   return (
     <div className="app">
@@ -33,22 +46,21 @@ function App() {
             </NavLink>
           </div>
           <div className="nav-status">
-            <div className="status-indicator">
-              <span
-                className={`status-dot ${connected ? 'connected' : 'disconnected'}`}
-              />
-              <span>{connected ? 'Connected' : 'Disconnected'}</span>
-            </div>
+            <ConnectionIndicator />
           </div>
         </div>
       </nav>
 
       <main className="main-content">
-        <Routes>
-          <Route path="/" element={<DesignPage />} />
-          <Route path="/schedule" element={<SchedulerPage />} />
-          <Route path="/layout" element={<LayoutPage />} />
-        </Routes>
+        <div style={{ display: location.pathname === '/' ? 'block' : 'none' }}>
+          <DesignPage />
+        </div>
+        <div style={{ display: location.pathname === '/schedule' ? 'block' : 'none' }}>
+          <SchedulerPage />
+        </div>
+        <div style={{ display: location.pathname === '/layout' ? 'block' : 'none' }}>
+          <LayoutPage />
+        </div>
       </main>
     </div>
   );

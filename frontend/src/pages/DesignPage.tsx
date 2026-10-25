@@ -1,22 +1,46 @@
-import { useState, useEffect } from 'react';
-import { HexColorPicker } from 'react-colorful';
-import { layoutAPI, designsAPI, playlistsAPI, previewAPI } from '../utils/api';
-import { useWebSocket } from '../hooks/useWebSocket';
-import type {
-  Design,
-  EffectType,
-  Playlist,
-  RGBW,
-  Wall,
-  LayoutData,
-  StaticDesignData,
-  MotionDesignData,
-} from '../types';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { useLocation } from 'react-router-dom';
+import { layoutAPI, designsAPI, playlistsAPI, aiAPI } from '../utils/api';
+import { usePreview, type PreviewRequest } from '../hooks/usePreview';
+import LiveLightPreview from '../components/LiveLightPreview';
+import StaticPanel from './design/StaticPanel';
+import MotionPanel from './design/MotionPanel';
+import PlaylistPanel from './design/PlaylistPanel';
+import { AiPromptModal, NameModal } from './design/Modals';
+import { useMotionEditor, usePlaylistEditor, useStaticEditor } from './design/editors';
+import type { Design, EffectType, Playlist, RGBW, LayoutData } from '../types';
 
 type TabType = 'static' | 'motion' | 'playlist';
 
+const TABS: { id: TabType; label: string }[] = [
+  { id: 'static', label: 'Static' },
+  { id: 'motion', label: 'Motion' },
+  { id: 'playlist', label: 'Playlist' },
+];
+
+function readShowDefective(): boolean {
+  try { return localStorage.getItem('showDefective') === 'true'; } catch { return false; }
+}
+
+/**
+ * AI static designs come back as an array indexed by light_id - 1, or (newer
+ * backends) as a map keyed by light_id. Either way, keep only lights that exist.
+ */
+function aiColorsToMap(colors: RGBW[] | Record<number, RGBW> | undefined, lightIds: Set<number>): Record<number, RGBW> {
+  const map: Record<number, RGBW> = {};
+  if (!colors) return map;
+  const entries: [number, RGBW][] = Array.isArray(colors)
+    ? colors.map((c, idx) => [idx + 1, c])
+    : Object.entries(colors).map(([k, c]) => [Number(k), c]);
+  for (const [id, color] of entries) {
+    if (color && (lightIds.size === 0 || lightIds.has(id))) map[id] = color;
+  }
+  return map;
+}
+
 function DesignPage() {
-  const { frameData } = useWebSocket();
+  const location = useLocation();
+  const isVisible = location.pathname === '/';
   const [activeTab, setActiveTab] = useState<TabType>('static');
   const [layout, setLayout] = useState<LayoutData | null>(null);
   const [designs, setDesigns] = useState<Design[]>([]);
@@ -25,367 +49,399 @@ function DesignPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Static mode state
-  const [selectedDesign, setSelectedDesign] = useState<Design | null>(null);
-  const [currentColors, setCurrentColors] = useState<Record<number, RGBW>>({});
-  const [selectedLights, setSelectedLights] = useState<Set<number>>(new Set());
+  // Picker color, shared by the static and motion editors
   const [currentColor, setCurrentColor] = useState<RGBW>({ r: 255, g: 255, b: 255, w: 255 });
-  const [isDragging, setIsDragging] = useState(false);
 
-  // Motion mode state
-  const [selectedEffect, setSelectedEffect] = useState<EffectType | null>(null);
-  const [motionColors, setMotionColors] = useState<RGBW[]>([]);
-  const [motionParams, setMotionParams] = useState<Record<string, number | boolean>>({});
+  const [previewMode, setPreviewMode] = useState<'2d' | '3d'>('2d');
+  const [showDefective, setShowDefective] = useState(readShowDefective);
+  const previewStripRef = useRef<HTMLDivElement>(null);
 
-  // Playlist mode state
-  const [selectedPlaylist, setSelectedPlaylist] = useState<Playlist | null>(null);
-  const [playlistName, setPlaylistName] = useState('');
-  const [playlistMode, setPlaylistMode] = useState<'sequence' | 'random'>('sequence');
+  // Modals
+  const [saveModal, setSaveModal] = useState<{ initialName: string } | null>(null);
+  const [showPlaylistSaveModal, setShowPlaylistSaveModal] = useState(false);
+  const [pendingSaveName, setPendingSaveName] = useState(''); // prefilled from AI-generated names
 
-  // Preview state
-  const [isLivePreview, setIsLivePreview] = useState(false);
+  // AI Designer
+  const [aiEnabled, setAiEnabled] = useState(false);
+  const [aiDescription, setAiDescription] = useState('');
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [showAiPanel, setShowAiPanel] = useState(false);
+  const [showAiEditPanel, setShowAiEditPanel] = useState(false);
+  const [aiEditDescription, setAiEditDescription] = useState('');
 
-  // Modal state
-  const [showSaveModal, setShowSaveModal] = useState(false);
-  const [saveAsName, setSaveAsName] = useState('');
-
-  useEffect(() => {
-    loadData();
-  }, []);
-
-  const loadData = async () => {
+  // Only the first load shows the loading screen; later refreshes keep the page
+  // (and the 3D canvas) mounted and update in the background
+  const loadData = useCallback(async () => {
     try {
-      setLoading(true);
-      const [layoutData, designsData, effectsData, playlistsData] = await Promise.all([
+      const [layoutData, designsData, effectsData, playlistsData, aiStatus] = await Promise.all([
         layoutAPI.getLayout(),
         designsAPI.getAll(),
         designsAPI.getEffectTypes(),
         playlistsAPI.getAll(),
+        aiAPI.getStatus().catch(() => ({ enabled: false })),
       ]);
       setLayout(layoutData);
       setDesigns(designsData);
       setEffectTypes(effectsData);
       setPlaylists(playlistsData);
+      setAiEnabled(aiStatus.enabled);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load data');
     } finally {
       setLoading(false);
     }
-  };
-
-  // Static mode functions
-  const loadDesign = (design: Design) => {
-    setSelectedDesign(design);
-    if (design.type === 'static') {
-      const data = design.data as StaticDesignData;
-      setCurrentColors(data.colors || {});
-    }
-    setSelectedLights(new Set());
-  };
-
-  const handleLightClick = (lightId: number) => {
-    if (isDragging) {
-      // Apply current color while dragging
-      setCurrentColors((prev) => ({
-        ...prev,
-        [lightId]: { ...currentColor },
-      }));
-    } else {
-      // Toggle selection
-      setSelectedLights((prev) => {
-        const newSet = new Set(prev);
-        if (newSet.has(lightId)) {
-          newSet.delete(lightId);
-        } else {
-          newSet.add(lightId);
-        }
-        return newSet;
-      });
-    }
-  };
-
-  const handleLightMouseDown = (lightId: number, e: React.MouseEvent) => {
-    e.preventDefault();
-    setIsDragging(true);
-    setCurrentColors((prev) => ({
-      ...prev,
-      [lightId]: { ...currentColor },
-    }));
-  };
-
-  const handleLightMouseEnter = (lightId: number) => {
-    if (isDragging) {
-      setCurrentColors((prev) => ({
-        ...prev,
-        [lightId]: { ...currentColor },
-      }));
-    }
-  };
-
-  const handleMouseUp = () => {
-    setIsDragging(false);
-  };
-
-  useEffect(() => {
-    document.addEventListener('mouseup', handleMouseUp);
-    return () => document.removeEventListener('mouseup', handleMouseUp);
   }, []);
 
-  const applyColorToSelected = () => {
-    if (selectedLights.size === 0) return;
+  // Refresh data whenever the page becomes visible
+  useEffect(() => {
+    if (isVisible) loadData();
+  }, [isVisible, loadData]);
 
-    setCurrentColors((prev) => {
-      const newColors = { ...prev };
-      selectedLights.forEach((lightId) => {
-        newColors[lightId] = { ...currentColor };
-      });
-      return newColors;
-    });
-    setSelectedLights(new Set());
-  };
+  const preview = usePreview({ isVisible, onError: setError });
 
-  const copyWallDesign = (fromWall: Wall, toWall: Wall) => {
-    if (!layout) return;
+  const editorDeps = { preview, reload: loadData, setError };
+  const staticEditor = useStaticEditor({ ...editorDeps, autoPreview: isVisible && activeTab === 'static' });
+  const motionEditor = useMotionEditor({ ...editorDeps, autoPreview: isVisible && activeTab === 'motion', effectTypes });
+  const playlistEditor = usePlaylistEditor({ reload: loadData, setError, designs, playlists });
 
-    const fromMatrix = fromWall.matrix;
-    const toMatrix = toWall.matrix;
+  // Derive whether any light uses RGBW
+  const hasRGBW = layout?.walls.some(w => w.lights?.some(l => l.light_type === 'RGBW') || w.matrix?.some(row => row?.some(l => l?.light_type === 'RGBW'))) ?? true;
 
-    if (!fromMatrix || !toMatrix) return;
-
-    setCurrentColors((prev) => {
-      const newColors = { ...prev };
-
-      // Copy colors based on relative position
-      for (let y = 0; y < Math.min(fromWall.height, toWall.height); y++) {
-        for (let x = 0; x < Math.min(fromWall.width, toWall.width); x++) {
-          const fromLight = fromMatrix[y]?.[x];
-          const toLight = toMatrix[y]?.[x];
-
-          if (fromLight && toLight && prev[fromLight.light_id]) {
-            newColors[toLight.light_id] = { ...prev[fromLight.light_id] };
-          }
-        }
+  const lightIds = useMemo(() => {
+    const ids = new Set<number>();
+    for (const wall of layout?.walls ?? []) {
+      for (const row of wall.matrix ?? []) {
+        for (const light of row ?? []) if (light) ids.add(light.light_id);
       }
-
-      return newColors;
-    });
-  };
-
-  const handleSaveDesign = async () => {
-    if (!selectedDesign) {
-      setShowSaveModal(true);
-      return;
     }
+    return ids;
+  }, [layout]);
 
-    try {
-      if (activeTab === 'static') {
-        await designsAPI.update(selectedDesign.id, {
-          name: selectedDesign.name,
-          data: { colors: currentColors },
-        });
-      }
-      await loadData();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save design');
-    }
-  };
+  // Track preview strip bottom for sticky color picker
+  useEffect(() => {
+    const el = previewStripRef.current;
+    if (!el) return;
+    const update = () => {
+      document.documentElement.style.setProperty('--preview-strip-bottom', `${el.getBoundingClientRect().bottom}px`);
+    };
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(el);
+    window.addEventListener('scroll', update, { passive: true });
+    return () => { observer.disconnect(); window.removeEventListener('scroll', update); };
+  }, [layout, loading]);
 
-  const handleSaveAs = async () => {
-    if (!saveAsName.trim()) return;
-
-    try {
-      if (activeTab === 'static') {
-        await designsAPI.create({
-          name: saveAsName,
-          type: 'static',
-          data: { colors: currentColors },
-        });
-      } else if (activeTab === 'motion' && selectedEffect) {
-        await designsAPI.create({
-          name: saveAsName,
-          type: 'motion',
-          data: {
-            type: selectedEffect.type,
-            colors: motionColors,
-            params: motionParams,
-            speed: 1,
-            scope: 'all',
-          },
-        });
-      }
-      await loadData();
-      setShowSaveModal(false);
-      setSaveAsName('');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save design');
-    }
-  };
+  // --- design list actions shared by static & motion ---
 
   const handleDeleteDesign = async (designId: string) => {
     if (!confirm('Are you sure you want to delete this design?')) return;
-
     try {
       await designsAPI.delete(designId);
-      if (selectedDesign?.id === designId) {
-        setSelectedDesign(null);
-        setCurrentColors({});
+      if (staticEditor.selectedDesign?.id === designId) {
+        staticEditor.reset();
+        preview.stop();
       }
+      if (motionEditor.selectedDesign?.id === designId) motionEditor.clear();
       await loadData();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to delete design');
     }
   };
 
-  // Motion mode functions
-  const selectEffect = (effect: EffectType) => {
-    setSelectedEffect(effect);
-    setMotionColors([...effect.defaultColors]);
-    const params: Record<string, number | boolean> = {};
-    Object.entries(effect.params).forEach(([key, param]) => {
-      params[key] = param.default;
+  const handleRenameDesign = async (designId: string, name: string) => {
+    try {
+      const design = designs.find(d => d.id === designId);
+      if (!design) return;
+      if (!design.data) throw new Error(`can't rename a design whose data is corrupt (${design.dataError || 'unknown error'})`);
+      await designsAPI.update(designId, { name, data: design.data });
+      for (const editor of [staticEditor, motionEditor]) {
+        if (editor.selectedDesign?.id === designId) editor.setSelectedDesign({ ...editor.selectedDesign, name });
+      }
+      await loadData();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to rename design');
+    }
+  };
+
+  const openSaveAs = () => setSaveModal({ initialName: pendingSaveName });
+
+  const handleSaveAs = async (name: string) => {
+    const ok = activeTab === 'static'
+      ? await staticEditor.saveAs(name)
+      : activeTab === 'motion' ? await motionEditor.saveAs(name) : false;
+    if (ok) {
+      setSaveModal(null);
+      setPendingSaveName('');
+    }
+  };
+
+  const handleSavePlaylist = async (name?: string) => {
+    const result = await playlistEditor.save(name);
+    if (result === 'needs-name') setShowPlaylistSaveModal(true);
+    if (result === 'saved') setShowPlaylistSaveModal(false);
+  };
+
+  // --- live preview ---
+
+  const currentPreviewRequest = (): PreviewRequest | null => {
+    if (activeTab === 'static') return { kind: 'static', colors: staticEditor.colors };
+    if (activeTab === 'motion' && motionEditor.effect) {
+      const { effect, colors, params, speed, scope } = motionEditor;
+      return { kind: 'effect', effectType: effect.type, colors, params, speed, scope };
+    }
+    if (activeTab === 'playlist' && playlistEditor.selectedPlaylist) {
+      return { kind: 'playlist', playlistId: playlistEditor.selectedPlaylist.id };
+    }
+    return null;
+  };
+
+  const toggleShowDefective = () => {
+    setShowDefective(d => {
+      try { localStorage.setItem('showDefective', String(!d)); } catch { /* storage unavailable */ }
+      return !d;
     });
-    setMotionParams(params);
   };
 
-  // Playlist mode functions
-  const createPlaylist = async () => {
-    if (!playlistName.trim()) return;
+  // --- AI ---
 
+  const openAiEditor = () => { setAiEditDescription(''); setAiError(null); setShowAiEditPanel(true); };
+
+  const generateAIDesign = async () => {
+    if (!aiDescription.trim()) return;
+    setAiLoading(true);
+    setAiError(null);
     try {
-      const playlist = await playlistsAPI.create({
-        name: playlistName,
-        play_mode: playlistMode,
-      });
-      await loadData();
-      setSelectedPlaylist(playlist);
-      setPlaylistName('');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create playlist');
-    }
-  };
-
-  const addToPlaylist = async (designId: string, duration: number = 10) => {
-    if (!selectedPlaylist) return;
-
-    try {
-      await playlistsAPI.addItem(selectedPlaylist.id, { design_id: designId, duration });
-      await loadData();
-      // Refresh selected playlist
-      const updated = await playlistsAPI.get(selectedPlaylist.id);
-      setSelectedPlaylist(updated);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to add to playlist');
-    }
-  };
-
-  const removeFromPlaylist = async (itemId: string) => {
-    if (!selectedPlaylist) return;
-
-    try {
-      await playlistsAPI.removeItem(selectedPlaylist.id, itemId);
-      const updated = await playlistsAPI.get(selectedPlaylist.id);
-      setSelectedPlaylist(updated);
-      await loadData();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to remove from playlist');
-    }
-  };
-
-  const deletePlaylist = async (playlistId: string) => {
-    if (!confirm('Are you sure you want to delete this playlist?')) return;
-
-    try {
-      await playlistsAPI.delete(playlistId);
-      if (selectedPlaylist?.id === playlistId) {
-        setSelectedPlaylist(null);
-      }
-      await loadData();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to delete playlist');
-    }
-  };
-
-  // Preview functions
-  const toggleLivePreview = async () => {
-    try {
-      if (isLivePreview) {
-        await previewAPI.stop();
-        setIsLivePreview(false);
+      const result = await aiAPI.generate({ description: aiDescription, mode: 'create' });
+      if (result.success && result.design) {
+        const design = result.design;
+        if (design.type === 'static') {
+          setActiveTab('static');
+          if (design.colors) {
+            staticEditor.applyGenerated(aiColorsToMap(design.colors, lightIds), aiDescription, true);
+          } else {
+            staticEditor.setSelectedDesign(null);
+          }
+        } else {
+          setActiveTab('motion');
+          motionEditor.setSelectedDesign(null);
+          motionEditor.applyGenerated({
+            effect: design.effect,
+            colors: Array.isArray(design.colors) ? design.colors : undefined,
+            speed: design.speed,
+            scope: design.scope,
+            params: design.params as Record<string, number | boolean | string> | undefined,
+          }, true);
+        }
+        // Prepopulate save name with AI-generated name
+        setPendingSaveName(design.name || '');
+        setAiDescription('');
+        setShowAiPanel(false);
       } else {
-        if (activeTab === 'static') {
-          await previewAPI.start({
-            designType: 'static',
-            designData: { colors: currentColors },
-          });
-        } else if (activeTab === 'motion' && selectedEffect) {
-          await previewAPI.previewEffect({
-            effectType: selectedEffect.type,
-            colors: motionColors,
-            params: motionParams,
-          });
-        } else if (activeTab === 'playlist' && selectedPlaylist) {
-          await previewAPI.startPlaylist(selectedPlaylist.id);
-        }
-        setIsLivePreview(true);
+        setAiError(result.error || 'Failed to generate design');
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to toggle preview');
+      setAiError(err instanceof Error ? err.message : 'Failed to generate design');
+    } finally {
+      setAiLoading(false);
     }
   };
 
-  // Helper functions
-  const rgbwToHex = (color: RGBW): string => {
-    const r = Math.round(color.r);
-    const g = Math.round(color.g);
-    const b = Math.round(color.b);
-    return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
-  };
+  // Sends the current design + edit instructions
+  const editAIDesign = async () => {
+    if (!aiEditDescription.trim()) return;
+    const isStaticEdit = activeTab === 'static';
+    if (!isStaticEdit && !motionEditor.effect) return;
 
-  const hexToRgbw = (hex: string, w: number = 0): RGBW => {
-    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-    return result
-      ? {
-          r: parseInt(result[1], 16),
-          g: parseInt(result[2], 16),
-          b: parseInt(result[3], 16),
-          w,
+    setAiLoading(true);
+    setAiError(null);
+    try {
+      const currentDesignData = isStaticEdit
+        ? { type: 'static', colors: staticEditor.colors }
+        : {
+            type: 'motion',
+            effect: motionEditor.effect!.type,
+            colors: motionEditor.colors,
+            speed: motionEditor.speed,
+            scope: motionEditor.scope,
+            params: motionEditor.params,
+          };
+      const result = await aiAPI.generate({ description: aiEditDescription, currentDesignData, mode: 'modify' });
+
+      if (result.success && result.design) {
+        const design = result.design;
+        if (design.type === 'static' && isStaticEdit) {
+          if (design.colors) {
+            const prompt = (staticEditor.prompt ? staticEditor.prompt + ' | Edit: ' : '') + aiEditDescription;
+            staticEditor.applyGenerated(aiColorsToMap(design.colors, lightIds), prompt, false);
+          }
+        } else if (design.type === 'motion' && !isStaticEdit) {
+          // Preserve the original prompt, append edit history
+          const originalPrompt = (motionEditor.params.prompt as string) || '';
+          const newParams = { ...((design.params as Record<string, number | boolean | string>) || {}) };
+          newParams.prompt = originalPrompt + ' | Edit: ' + aiEditDescription;
+          motionEditor.applyGenerated({
+            effect: design.effect,
+            colors: Array.isArray(design.colors) ? design.colors : undefined,
+            speed: design.speed,
+            scope: design.scope,
+            params: newParams,
+          }, false);
         }
-      : { r: 0, g: 0, b: 0, w: 0 };
-  };
-
-  const getLightColor = (lightId: number): string => {
-    // Use live frame data if preview is active, otherwise use design colors
-    const color = isLivePreview && frameData[lightId] ? frameData[lightId] : currentColors[lightId];
-
-    if (!color) return '#222';
-
-    // Combine RGB and W for display
-    const r = Math.min(255, color.r + color.w);
-    const g = Math.min(255, color.g + color.w);
-    const b = Math.min(255, color.b + color.w);
-
-    return `rgb(${r}, ${g}, ${b})`;
+        setAiEditDescription('');
+        setShowAiEditPanel(false);
+      } else {
+        setAiError(result.error || 'Failed to edit design');
+      }
+    } catch (err) {
+      setAiError(err instanceof Error ? err.message : 'Failed to edit design');
+    } finally {
+      setAiLoading(false);
+    }
   };
 
   if (loading) {
     return <div className="page-header"><h1>Loading...</h1></div>;
   }
 
+  // One tab bar, shown at the top of whichever panel's sidebar is active
+  const sidebarHeader = (
+    <>
+      <div className="tabs" style={{ marginBottom: 0 }} role="tablist" aria-label="Design type">
+        {TABS.map(tab => (
+          <button
+            key={tab.id}
+            role="tab"
+            aria-selected={activeTab === tab.id}
+            className={`tab ${activeTab === tab.id ? 'active' : ''}`}
+            onClick={() => setActiveTab(tab.id)}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+      {aiEnabled && activeTab !== 'playlist' && (
+        <button className={`btn btn-sm ${showAiPanel ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setShowAiPanel(!showAiPanel)} style={{ width: '100%' }}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 16.8l-6.2 4.5 2.4-7.4L2 9.4h7.6z"/></svg>
+          AI Designer
+        </button>
+      )}
+    </>
+  );
+
   return (
     <div>
-      <div className="page-header">
-        <h1 className="page-title">Design</h1>
-        <div className="live-preview-toggle">
-          <span>Live Preview</span>
-          <div
-            className={`toggle-switch ${isLivePreview ? 'active' : ''}`}
-            onClick={toggleLivePreview}
+      {/* Preview Strip */}
+      {layout && (
+        <div className="preview-strip" ref={previewStripRef}>
+          <div className="preview-strip-header">
+            <div className="preview-strip-title">Preview</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+              <div className="preview-mode-toggle" role="group" aria-label="Preview mode">
+                <button className={previewMode === '2d' ? 'active' : ''} aria-pressed={previewMode === '2d'} onClick={() => setPreviewMode('2d')}>
+                  2D
+                </button>
+                <button className={previewMode === '3d' ? 'active' : ''} aria-pressed={previewMode === '3d'} onClick={() => setPreviewMode('3d')}>
+                  3D
+                </button>
+              </div>
+              <div className="live-preview-toggle">
+                <span id="toggle-show-defective">Show Defective</span>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={showDefective}
+                  aria-labelledby="toggle-show-defective"
+                  className={`toggle-switch ${showDefective ? 'active' : ''}`}
+                  onClick={toggleShowDefective}
+                />
+              </div>
+              <div className="live-preview-toggle">
+                <span id="toggle-live-preview">Live Preview</span>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={preview.isLive}
+                  aria-labelledby="toggle-live-preview"
+                  className={`toggle-switch ${preview.isLive ? 'active' : ''}`}
+                  onClick={() => preview.toggleLive(currentPreviewRequest())}
+                />
+              </div>
+            </div>
+          </div>
+          <LiveLightPreview
+            walls={layout.walls}
+            mode={previewMode}
+            active={isVisible}
+            fallbackColors={staticEditor.colors}
+            showDefective={showDefective}
           />
         </div>
-      </div>
+      )}
+
+      {/* Static AI prompt display */}
+      {activeTab === 'static' && staticEditor.prompt && (
+        <div style={{ marginBottom: '0.75rem', padding: '0.5rem 0.75rem', background: 'var(--bg-tertiary)', borderRadius: '4px', fontSize: '0.8rem', color: 'var(--text-secondary)', display: 'flex', alignItems: 'flex-start', gap: '0.5rem' }}>
+          <span style={{ fontStyle: 'italic', flex: 1 }}>{staticEditor.prompt}</span>
+          {aiEnabled && (
+            <button
+              className="btn btn-secondary"
+              style={{ padding: '0.15rem 0.5rem', fontSize: '0.75rem', flexShrink: 0 }}
+              onClick={openAiEditor}
+            >
+              Edit
+            </button>
+          )}
+        </div>
+      )}
+
+      {showAiPanel && aiEnabled && (
+        <AiPromptModal
+          title="AI Design Generator"
+          intro={
+            <p style={{ marginBottom: '1rem', color: 'var(--text-secondary)' }}>
+              Describe the light show you want and AI will generate it for you.
+            </p>
+          }
+          label="Describe your design"
+          placeholder={activeTab === 'static'
+            ? "e.g., 'A warm sunset gradient from orange on the west to purple on the east'"
+            : "e.g., 'Christmas candy cane stripes in red and green moving slowly'"}
+          value={aiDescription}
+          onChange={setAiDescription}
+          loading={aiLoading}
+          error={aiError}
+          submitLabel="Generate"
+          loadingLabel="Generating..."
+          onSubmit={generateAIDesign}
+          onClose={() => setShowAiPanel(false)}
+        />
+      )}
+
+      {showAiEditPanel && aiEnabled && (
+        <AiPromptModal
+          title="Edit AI Design"
+          intro={
+            <div style={{ marginBottom: '1rem', padding: '0.5rem 0.75rem', background: 'var(--bg-tertiary)', borderRadius: '4px', fontSize: '0.8rem' }}>
+              <div style={{ color: 'var(--text-secondary)', marginBottom: '0.25rem', fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Current prompt</div>
+              <div style={{ color: 'var(--text-primary)', fontStyle: 'italic' }}>{activeTab === 'static' ? staticEditor.prompt : (motionEditor.params.prompt as string)}</div>
+            </div>
+          }
+          label="What would you like to change?"
+          placeholder="e.g., 'Make it faster', 'Add a sparkle effect on top', 'Change the direction to right-to-left'"
+          value={aiEditDescription}
+          onChange={setAiEditDescription}
+          loading={aiLoading}
+          error={aiError}
+          submitLabel="Apply Changes"
+          loadingLabel="Applying..."
+          onSubmit={editAIDesign}
+          onClose={() => setShowAiEditPanel(false)}
+        />
+      )}
 
       {error && (
-        <div className="card" style={{ backgroundColor: 'var(--error)', marginBottom: '1rem' }}>
+        <div className="card" style={{ backgroundColor: 'var(--error)', marginBottom: '1rem' }} role="alert">
           {error}
           <button className="btn btn-sm" onClick={() => setError(null)} style={{ marginLeft: '1rem' }}>
             Dismiss
@@ -393,622 +449,68 @@ function DesignPage() {
         </div>
       )}
 
-      {/* Tabs */}
-      <div className="tabs">
-        <button
-          className={`tab ${activeTab === 'static' ? 'active' : ''}`}
-          onClick={() => setActiveTab('static')}
-        >
-          Static
-        </button>
-        <button
-          className={`tab ${activeTab === 'motion' ? 'active' : ''}`}
-          onClick={() => setActiveTab('motion')}
-        >
-          Motion
-        </button>
-        <button
-          className={`tab ${activeTab === 'playlist' ? 'active' : ''}`}
-          onClick={() => setActiveTab('playlist')}
-        >
-          Playlist
-        </button>
-      </div>
-
-      {/* Static Mode */}
-      {activeTab === 'static' && (
-        <div>
-          {/* Saved Designs */}
-          <div className="card">
-            <div className="card-header">
-              <h3 className="card-title">Saved Designs</h3>
-              <div className="btn-group">
-                <button className="btn btn-secondary btn-sm" onClick={() => {
-                  setSelectedDesign(null);
-                  setCurrentColors({});
-                }}>
-                  New
-                </button>
-                <button className="btn btn-primary btn-sm" onClick={handleSaveDesign}>
-                  Save
-                </button>
-                <button className="btn btn-secondary btn-sm" onClick={() => setShowSaveModal(true)}>
-                  Save As
-                </button>
-              </div>
-            </div>
-
-            <div className="design-list">
-              {designs
-                .filter((d) => d.type === 'static')
-                .map((design) => (
-                  <div
-                    key={design.id}
-                    className={`design-item ${selectedDesign?.id === design.id ? 'selected' : ''}`}
-                    onClick={() => loadDesign(design)}
-                  >
-                    <div className="design-item-name">{design.name}</div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <span className="design-item-type">{design.type}</span>
-                      <button
-                        className="btn btn-danger btn-sm"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleDeleteDesign(design.id);
-                        }}
-                      >
-                        Delete
-                      </button>
-                    </div>
-                  </div>
-                ))}
-            </div>
-          </div>
-
-          {/* Color Picker */}
-          <div className="card">
-            <div className="card-header">
-              <h3 className="card-title">Color</h3>
-              <button className="btn btn-primary btn-sm" onClick={applyColorToSelected}>
-                Apply to Selected ({selectedLights.size})
-              </button>
-            </div>
-
-            <div style={{ display: 'flex', gap: '2rem', flexWrap: 'wrap' }}>
-              <div>
-                <HexColorPicker
-                  color={rgbwToHex(currentColor)}
-                  onChange={(hex) => setCurrentColor({ ...hexToRgbw(hex), w: currentColor.w })}
-                />
-              </div>
-
-              <div className="rgbw-sliders" style={{ flex: 1, minWidth: '200px' }}>
-                <div className="rgbw-slider">
-                  <label>
-                    R
-                    <input
-                      type="range"
-                      min="0"
-                      max="255"
-                      value={currentColor.r}
-                      onChange={(e) =>
-                        setCurrentColor({ ...currentColor, r: parseInt(e.target.value) })
-                      }
-                    />
-                    <input
-                      type="number"
-                      min="0"
-                      max="255"
-                      value={currentColor.r}
-                      onChange={(e) =>
-                        setCurrentColor({ ...currentColor, r: parseInt(e.target.value) || 0 })
-                      }
-                    />
-                  </label>
-                </div>
-                <div className="rgbw-slider">
-                  <label>
-                    G
-                    <input
-                      type="range"
-                      min="0"
-                      max="255"
-                      value={currentColor.g}
-                      onChange={(e) =>
-                        setCurrentColor({ ...currentColor, g: parseInt(e.target.value) })
-                      }
-                    />
-                    <input
-                      type="number"
-                      min="0"
-                      max="255"
-                      value={currentColor.g}
-                      onChange={(e) =>
-                        setCurrentColor({ ...currentColor, g: parseInt(e.target.value) || 0 })
-                      }
-                    />
-                  </label>
-                </div>
-                <div className="rgbw-slider">
-                  <label>
-                    B
-                    <input
-                      type="range"
-                      min="0"
-                      max="255"
-                      value={currentColor.b}
-                      onChange={(e) =>
-                        setCurrentColor({ ...currentColor, b: parseInt(e.target.value) })
-                      }
-                    />
-                    <input
-                      type="number"
-                      min="0"
-                      max="255"
-                      value={currentColor.b}
-                      onChange={(e) =>
-                        setCurrentColor({ ...currentColor, b: parseInt(e.target.value) || 0 })
-                      }
-                    />
-                  </label>
-                </div>
-                <div className="rgbw-slider">
-                  <label>
-                    W
-                    <input
-                      type="range"
-                      min="0"
-                      max="255"
-                      value={currentColor.w}
-                      onChange={(e) =>
-                        setCurrentColor({ ...currentColor, w: parseInt(e.target.value) })
-                      }
-                    />
-                    <input
-                      type="number"
-                      min="0"
-                      max="255"
-                      value={currentColor.w}
-                      onChange={(e) =>
-                        setCurrentColor({ ...currentColor, w: parseInt(e.target.value) || 0 })
-                      }
-                    />
-                  </label>
-                </div>
-
-                <div
-                  style={{
-                    width: '100%',
-                    height: '40px',
-                    borderRadius: '4px',
-                    marginTop: '1rem',
-                    backgroundColor: `rgb(${Math.min(255, currentColor.r + currentColor.w)}, ${Math.min(255, currentColor.g + currentColor.w)}, ${Math.min(255, currentColor.b + currentColor.w)})`,
-                  }}
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* Light Matrix */}
-          {layout && (
-            <div className="matrix-container">
-              {layout.walls.map((wall) => (
-                <div key={wall.id} className="wall-section">
-                  <div className="wall-header">
-                    <h3 className="wall-title">{wall.name}</h3>
-                    <div className="btn-group">
-                      {wall.name === 'West' && layout.walls.find((w) => w.name === 'East') && (
-                        <button
-                          className="btn btn-secondary btn-sm"
-                          onClick={() =>
-                            copyWallDesign(wall, layout.walls.find((w) => w.name === 'East')!)
-                          }
-                        >
-                          Copy to East
-                        </button>
-                      )}
-                      {wall.name === 'North' && layout.walls.find((w) => w.name === 'South') && (
-                        <button
-                          className="btn btn-secondary btn-sm"
-                          onClick={() =>
-                            copyWallDesign(wall, layout.walls.find((w) => w.name === 'South')!)
-                          }
-                        >
-                          Copy to South
-                        </button>
-                      )}
-                    </div>
-                  </div>
-
-                  <div
-                    className="light-grid"
-                    style={{
-                      gridTemplateColumns: `repeat(${wall.width}, 40px)`,
-                    }}
-                  >
-                    {Array.from({ length: wall.height }, (_, rowIdx) => {
-                      const y = wall.height - 1 - rowIdx;
-                      return Array.from({ length: wall.width }, (_, x) => {
-                        const light = wall.matrix?.[y]?.[x];
-                        if (!light) return <div key={`${y}-${x}`} className="light-cell" />;
-
-                        return (
-                          <div
-                            key={light.id}
-                            className={`light-cell ${selectedLights.has(light.light_id) ? 'selected' : ''}`}
-                            style={{ backgroundColor: getLightColor(light.light_id) }}
-                            onMouseDown={(e) => handleLightMouseDown(light.light_id, e)}
-                            onMouseEnter={() => handleLightMouseEnter(light.light_id)}
-                            onClick={() => handleLightClick(light.light_id)}
-                          >
-                            {light.light_id}
-                          </div>
-                        );
-                      });
-                    }).flat()}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+      {layout && activeTab === 'static' && (
+        <StaticPanel
+          editor={staticEditor}
+          layout={layout}
+          designs={designs}
+          sidebarHeader={sidebarHeader}
+          currentColor={currentColor}
+          setCurrentColor={setCurrentColor}
+          hasRGBW={hasRGBW}
+          onSaveAs={openSaveAs}
+          onRenameDesign={handleRenameDesign}
+          onDeleteDesign={handleDeleteDesign}
+        />
       )}
 
-      {/* Motion Mode */}
       {activeTab === 'motion' && (
-        <div>
-          {/* Effect Types */}
-          <div className="card">
-            <div className="card-header">
-              <h3 className="card-title">Effect Types</h3>
-            </div>
-            <div className="design-list">
-              {effectTypes.map((effect) => (
-                <div
-                  key={effect.type}
-                  className={`design-item ${selectedEffect?.type === effect.type ? 'selected' : ''}`}
-                  onClick={() => selectEffect(effect)}
-                >
-                  <div className="design-item-name">{effect.name}</div>
-                  <div className="design-item-type">{effect.description}</div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Effect Configuration */}
-          {selectedEffect && (
-            <div className="card">
-              <div className="card-header">
-                <h3 className="card-title">Configure: {selectedEffect.name}</h3>
-                <div className="btn-group">
-                  <button className="btn btn-primary btn-sm" onClick={() => setShowSaveModal(true)}>
-                    Save as Design
-                  </button>
-                </div>
-              </div>
-
-              {/* Colors */}
-              {selectedEffect.defaultColors.length > 0 && (
-                <div className="form-group">
-                  <label className="form-label">Colors</label>
-                  <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
-                    {motionColors.map((color, idx) => (
-                      <div key={idx} style={{ textAlign: 'center' }}>
-                        <div
-                          style={{
-                            width: '60px',
-                            height: '60px',
-                            borderRadius: '4px',
-                            backgroundColor: `rgb(${Math.min(255, color.r + color.w)}, ${Math.min(255, color.g + color.w)}, ${Math.min(255, color.b + color.w)})`,
-                            border: '2px solid var(--border-color)',
-                            cursor: 'pointer',
-                          }}
-                          onClick={() => {
-                            const hex = prompt('Enter hex color:', rgbwToHex(color));
-                            if (hex) {
-                              const newColors = [...motionColors];
-                              newColors[idx] = hexToRgbw(hex, color.w);
-                              setMotionColors(newColors);
-                            }
-                          }}
-                        />
-                        <small>Color {idx + 1}</small>
-                        <div>
-                          <input
-                            type="range"
-                            min="0"
-                            max="255"
-                            value={color.w}
-                            onChange={(e) => {
-                              const newColors = [...motionColors];
-                              newColors[idx] = { ...color, w: parseInt(e.target.value) };
-                              setMotionColors(newColors);
-                            }}
-                            style={{ width: '60px' }}
-                          />
-                          <small>W: {color.w}</small>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Parameters */}
-              {Object.entries(selectedEffect.params).length > 0 && (
-                <div className="form-group">
-                  <label className="form-label">Parameters</label>
-                  <div className="form-row">
-                    {Object.entries(selectedEffect.params).map(([key, param]) => (
-                      <div key={key} className="form-group">
-                        <label className="form-label">{key}</label>
-                        {param.type === 'number' ? (
-                          <input
-                            type="range"
-                            className="form-input"
-                            min={param.min}
-                            max={param.max}
-                            step={param.step || 1}
-                            value={motionParams[key] as number}
-                            onChange={(e) =>
-                              setMotionParams({ ...motionParams, [key]: parseFloat(e.target.value) })
-                            }
-                          />
-                        ) : (
-                          <input
-                            type="checkbox"
-                            checked={motionParams[key] as boolean}
-                            onChange={(e) =>
-                              setMotionParams({ ...motionParams, [key]: e.target.checked })
-                            }
-                          />
-                        )}
-                        <span style={{ marginLeft: '0.5rem' }}>
-                          {motionParams[key]?.toString()}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Saved Motion Designs */}
-          <div className="card">
-            <div className="card-header">
-              <h3 className="card-title">Saved Motion Designs</h3>
-            </div>
-            <div className="design-list">
-              {designs
-                .filter((d) => d.type === 'motion')
-                .map((design) => (
-                  <div
-                    key={design.id}
-                    className={`design-item ${selectedDesign?.id === design.id ? 'selected' : ''}`}
-                    onClick={() => {
-                      setSelectedDesign(design);
-                      const data = design.data as MotionDesignData;
-                      const effect = effectTypes.find((e) => e.type === data.type);
-                      if (effect) {
-                        setSelectedEffect(effect);
-                        setMotionColors(data.colors || effect.defaultColors);
-                        setMotionParams((data.params as Record<string, number | boolean>) || {});
-                      }
-                    }}
-                  >
-                    <div className="design-item-name">{design.name}</div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <span className="design-item-type">
-                        {(design.data as MotionDesignData).type}
-                      </span>
-                      <button
-                        className="btn btn-danger btn-sm"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleDeleteDesign(design.id);
-                        }}
-                      >
-                        Delete
-                      </button>
-                    </div>
-                  </div>
-                ))}
-            </div>
-          </div>
-
-          {/* Preview */}
-          {layout && (
-            <div className="preview-container">
-              <div className="preview-header">
-                <h3 className="preview-title">Preview</h3>
-              </div>
-              <div className="preview-matrix">
-                {layout.walls.map((wall) =>
-                  wall.matrix?.flat().map((light) => (
-                    <div
-                      key={light?.id}
-                      className="preview-light"
-                      style={{
-                        backgroundColor: light ? getLightColor(light.light_id) : '#222',
-                      }}
-                    />
-                  ))
-                )}
-              </div>
-            </div>
-          )}
-        </div>
+        <MotionPanel
+          editor={motionEditor}
+          designs={designs}
+          effectTypes={effectTypes}
+          walls={layout?.walls ?? []}
+          sidebarHeader={sidebarHeader}
+          currentColor={currentColor}
+          setCurrentColor={setCurrentColor}
+          hasRGBW={hasRGBW}
+          onSaveAs={openSaveAs}
+          onRenameDesign={handleRenameDesign}
+          onDeleteDesign={handleDeleteDesign}
+          onOpenAiGenerator={() => setShowAiPanel(true)}
+          onOpenAiEditor={openAiEditor}
+        />
       )}
 
-      {/* Playlist Mode */}
       {activeTab === 'playlist' && (
-        <div>
-          {/* Create Playlist */}
-          <div className="card">
-            <div className="card-header">
-              <h3 className="card-title">Create New Playlist</h3>
-            </div>
-            <div className="form-row">
-              <div className="form-group">
-                <label className="form-label">Name</label>
-                <input
-                  type="text"
-                  className="form-input"
-                  value={playlistName}
-                  onChange={(e) => setPlaylistName(e.target.value)}
-                  placeholder="Playlist name"
-                />
-              </div>
-              <div className="form-group">
-                <label className="form-label">Play Mode</label>
-                <select
-                  className="form-select"
-                  value={playlistMode}
-                  onChange={(e) => setPlaylistMode(e.target.value as 'sequence' | 'random')}
-                >
-                  <option value="sequence">Sequential</option>
-                  <option value="random">Random</option>
-                </select>
-              </div>
-              <div className="form-group" style={{ alignSelf: 'flex-end' }}>
-                <button className="btn btn-primary" onClick={createPlaylist}>
-                  Create
-                </button>
-              </div>
-            </div>
-          </div>
-
-          {/* Playlists */}
-          <div className="card">
-            <div className="card-header">
-              <h3 className="card-title">Playlists</h3>
-            </div>
-            <div className="design-list">
-              {playlists.map((playlist) => (
-                <div
-                  key={playlist.id}
-                  className={`design-item ${selectedPlaylist?.id === playlist.id ? 'selected' : ''}`}
-                  onClick={() => setSelectedPlaylist(playlist)}
-                >
-                  <div className="design-item-name">{playlist.name}</div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span className="design-item-type">
-                      {playlist.items.length} items • {playlist.play_mode}
-                    </span>
-                    <button
-                      className="btn btn-danger btn-sm"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        deletePlaylist(playlist.id);
-                      }}
-                    >
-                      Delete
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Playlist Editor */}
-          {selectedPlaylist && (
-            <div className="card">
-              <div className="card-header">
-                <h3 className="card-title">Edit: {selectedPlaylist.name}</h3>
-              </div>
-
-              <h4 style={{ marginBottom: '1rem' }}>Items</h4>
-              <div className="playlist-items">
-                {selectedPlaylist.items.map((item, idx) => (
-                  <div key={item.id} className="playlist-item">
-                    <span className="playlist-item-drag">{idx + 1}.</span>
-                    <span className="playlist-item-name">
-                      {item.design_name} ({item.design_type})
-                    </span>
-                    <input
-                      type="number"
-                      className="form-input playlist-item-duration"
-                      value={item.duration}
-                      min="1"
-                      onChange={async (e) => {
-                        // Update duration
-                        await playlistsAPI.update(selectedPlaylist.id, {
-                          name: selectedPlaylist.name,
-                          play_mode: selectedPlaylist.play_mode,
-                          items: selectedPlaylist.items.map((i) =>
-                            i.id === item.id
-                              ? { design_id: i.design_id, duration: parseInt(e.target.value) || 1 }
-                              : { design_id: i.design_id, duration: i.duration }
-                          ),
-                        });
-                        const updated = await playlistsAPI.get(selectedPlaylist.id);
-                        setSelectedPlaylist(updated);
-                      }}
-                    />
-                    <span>sec</span>
-                    <button
-                      className="btn btn-danger btn-sm"
-                      onClick={() => removeFromPlaylist(item.id)}
-                    >
-                      Remove
-                    </button>
-                  </div>
-                ))}
-              </div>
-
-              <h4 style={{ marginTop: '1.5rem', marginBottom: '1rem' }}>Add Design</h4>
-              <div className="design-list">
-                {designs.map((design) => (
-                  <div
-                    key={design.id}
-                    className="design-item"
-                    onClick={() => addToPlaylist(design.id)}
-                  >
-                    <div className="design-item-name">{design.name}</div>
-                    <div className="design-item-type">{design.type}</div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
+        <PlaylistPanel
+          editor={playlistEditor}
+          designs={designs}
+          playlists={playlists}
+          sidebarHeader={sidebarHeader}
+          onSave={() => handleSavePlaylist()}
+        />
       )}
 
-      {/* Save As Modal */}
-      {showSaveModal && (
-        <div className="modal-overlay" onClick={() => setShowSaveModal(false)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <h3 className="modal-title">Save Design</h3>
-              <button className="modal-close" onClick={() => setShowSaveModal(false)}>
-                &times;
-              </button>
-            </div>
+      {saveModal && (
+        <NameModal
+          title="Save Design"
+          label="Design Name"
+          placeholder="Enter design name"
+          initialName={saveModal.initialName}
+          onSave={handleSaveAs}
+          onClose={() => setSaveModal(null)}
+        />
+      )}
 
-            <div className="form-group">
-              <label className="form-label">Design Name</label>
-              <input
-                type="text"
-                className="form-input"
-                value={saveAsName}
-                onChange={(e) => setSaveAsName(e.target.value)}
-                placeholder="Enter design name"
-                autoFocus
-              />
-            </div>
-
-            <div className="modal-footer">
-              <button className="btn btn-secondary" onClick={() => setShowSaveModal(false)}>
-                Cancel
-              </button>
-              <button className="btn btn-primary" onClick={handleSaveAs}>
-                Save
-              </button>
-            </div>
-          </div>
-        </div>
+      {showPlaylistSaveModal && (
+        <NameModal
+          title="Save Playlist"
+          label="Playlist Name"
+          placeholder="Enter playlist name"
+          onSave={(name) => handleSavePlaylist(name)}
+          onClose={() => setShowPlaylistSaveModal(false)}
+        />
       )}
     </div>
   );

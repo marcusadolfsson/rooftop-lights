@@ -13,6 +13,7 @@ export interface Light {
   light_id: number;
   light_type: 'RGB' | 'RGBW';
   dmx_start_channel: number;
+  defective_channels: string;
 }
 
 export interface Wall {
@@ -22,28 +23,38 @@ export interface Wall {
   height: number;
   position: number;
   connects_to_next: boolean;
+  group_id?: string | null;
   lights?: Light[];
   matrix?: Light[][];
+}
+
+export interface WallGroup {
+  id: string;
+  name: string;
+  position: number;
 }
 
 export interface Design {
   id: string;
   name: string;
   type: 'static' | 'motion';
-  data: StaticDesignData | MotionDesignData;
+  // null when the stored row is corrupt (the backend then sets dataError)
+  data: StaticDesignData | MotionDesignData | null;
+  dataError?: string;
   created_at?: string;
   updated_at?: string;
 }
 
 export interface StaticDesignData {
   colors: Record<number, RGBW>;
+  prompt?: string;
 }
 
 export interface MotionDesignData {
   type: string;
   colors: RGBW[];
   speed: number;
-  scope: 'wall' | 'all';
+  scope: 'wall' | 'all' | 'group';
   wallIds?: string[];
   params?: Record<string, unknown>;
 }
@@ -57,11 +68,13 @@ export interface EffectType {
 }
 
 export interface EffectParam {
-  type: 'number' | 'boolean';
-  default: number | boolean;
+  type: 'number' | 'boolean' | 'string';
+  default: number | boolean | string;
   min?: number;
   max?: number;
   step?: number;
+  label?: string;
+  unit?: string;
 }
 
 export interface Playlist {
@@ -81,6 +94,7 @@ export interface PlaylistItem {
   design_type?: string;
   duration: number;
   position: number;
+  transition: 'cut' | 'fade' | 'fade_black';
 }
 
 export interface Schedule {
@@ -93,6 +107,8 @@ export interface Schedule {
   is_default: boolean;
   start_date: string | null;
   end_date: string | null;
+  start_time: string | null;
+  end_time: string | null;
   priority: number;
 }
 
@@ -105,6 +121,7 @@ export interface ArtNetConfig {
 
 export interface LayoutData {
   walls: Wall[];
+  groups: WallGroup[];
   totalLights: number;
   totalDMXChannels: number;
 }

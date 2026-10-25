@@ -1,13 +1,30 @@
-import { useState, useEffect } from 'react';
-import { designsAPI, playlistsAPI, schedulesAPI } from '../utils/api';
-import type { Design, Playlist, Schedule } from '../types';
+import { useState, useEffect, useCallback } from 'react';
+import { useLocation } from 'react-router-dom';
+import { designsAPI, playlistsAPI, schedulesAPI, layoutAPI, previewAPI, healthAPI } from '../utils/api';
+import LiveLightPreview from '../components/LiveLightPreview';
+import type { Design, Playlist, Schedule, LayoutData } from '../types';
+
+const ACTIVE_POLL_MS = 30000;
+
+// Parse "YYYY-MM-DD" as a local calendar date. new Date("YYYY-MM-DD") is UTC
+// midnight, which displays as the previous day in time zones west of UTC.
+function parseLocalDate(dateStr: string): Date | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(dateStr);
+  if (!m) return null;
+  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+}
 
 function SchedulerPage() {
+  const location = useLocation();
+  const isVisible = location.pathname === '/schedule';
+  const [layout, setLayout] = useState<LayoutData | null>(null);
   const [designs, setDesigns] = useState<Design[]>([]);
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [defaultSchedule, setDefaultSchedule] = useState<Schedule | null>(null);
   const [activeSchedule, setActiveSchedule] = useState<Schedule | null>(null);
+  const [livePreviewActive, setLivePreviewActive] = useState(false);
+  const [livePreviewInfo, setLivePreviewInfo] = useState<{ type: string; effectType?: string } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -22,27 +39,66 @@ function SchedulerPage() {
   const [selectedPlaylistId, setSelectedPlaylistId] = useState<string>('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
+  const [startTime, setStartTime] = useState('16:00');
+  const [endTime, setEndTime] = useState('16:00');
   const [priority, setPriority] = useState(0);
+  const [serverTimeZone, setServerTimeZone] = useState<string | null>(null);
 
+  // Load/refresh data when page becomes visible
   useEffect(() => {
-    loadData();
+    if (isVisible) {
+      loadData();
+    }
+  }, [isVisible]);
+
+  // Server time zone (schedule times are evaluated in it), if the backend reports one
+  useEffect(() => {
+    healthAPI.get()
+      .then((h) => { if (typeof h.timeZone === 'string' && h.timeZone) setServerTimeZone(h.timeZone); })
+      .catch(() => { /* optional; fall back to the generic hint */ });
   }, []);
 
+  // Keep "Currently Active" fresh while the page is visible
+  const refreshActive = useCallback(async () => {
+    try {
+      const [activeData, previewStatus] = await Promise.all([
+        schedulesAPI.getActive(),
+        previewAPI.getStatus(),
+      ]);
+      setActiveSchedule(activeData);
+      setLivePreviewActive(previewStatus.isLivePreview);
+      setLivePreviewInfo(previewStatus.livePreviewInfo);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to refresh active schedule');
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!isVisible) return;
+    const id = window.setInterval(refreshActive, ACTIVE_POLL_MS);
+    return () => clearInterval(id);
+  }, [isVisible, refreshActive]);
+
+  // Only the first load shows the loading screen; later refreshes happen in the background
   const loadData = async () => {
     try {
-      setLoading(true);
-      const [designsData, playlistsData, schedulesData, defaultData, activeData] = await Promise.all([
+      const [layoutData, designsData, playlistsData, schedulesData, defaultData, activeData, previewStatus] = await Promise.all([
+        layoutAPI.getLayout(),
         designsAPI.getAll(),
         playlistsAPI.getAll(),
         schedulesAPI.getAll(),
         schedulesAPI.getDefault(),
         schedulesAPI.getActive(),
+        previewAPI.getStatus(),
       ]);
+      setLayout(layoutData);
       setDesigns(designsData);
       setPlaylists(playlistsData);
       setSchedules(schedulesData.filter((s: Schedule) => !s.is_default));
       setDefaultSchedule(defaultData);
       setActiveSchedule(activeData);
+      setLivePreviewActive(previewStatus.isLivePreview);
+      setLivePreviewInfo(previewStatus.livePreviewInfo);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load data');
     } finally {
@@ -79,11 +135,15 @@ function SchedulerPage() {
         design_type: 'static' | 'motion' | 'playlist';
         start_date: string;
         end_date: string;
+        start_time: string;
+        end_time: string;
         priority: number;
       } = {
         design_type: selectedType,
         start_date: startDate,
         end_date: endDate,
+        start_time: startTime,
+        end_time: endTime,
         priority,
       };
 
@@ -126,6 +186,8 @@ function SchedulerPage() {
     setSelectedPlaylistId(schedule.playlist_id || '');
     setStartDate(schedule.start_date || '');
     setEndDate(schedule.end_date || '');
+    setStartTime(schedule.start_time || '16:00');
+    setEndTime(schedule.end_time || '16:00');
     setPriority(schedule.priority);
     setShowScheduleModal(true);
   };
@@ -136,12 +198,17 @@ function SchedulerPage() {
     setSelectedPlaylistId('');
     setStartDate('');
     setEndDate('');
+    setStartTime('16:00');
+    setEndTime('16:00');
     setPriority(0);
   };
 
-  const formatDate = (dateStr: string | null): string => {
+  const formatDate = (dateStr: string | null, timeStr?: string | null): string => {
     if (!dateStr) return 'N/A';
-    return new Date(dateStr).toLocaleDateString();
+    const parsed = parseLocalDate(dateStr);
+    const date = parsed ? parsed.toLocaleDateString() : dateStr;
+    if (timeStr) return `${date} ${timeStr}`;
+    return date;
   };
 
   const getScheduleDisplayName = (schedule: Schedule): string => {
@@ -151,12 +218,24 @@ function SchedulerPage() {
     return schedule.design_name || 'Unknown Design';
   };
 
+  const timeZoneHint = serverTimeZone ? `server time, ${serverTimeZone}` : 'server local time';
+
   if (loading) {
     return <div className="page-header"><h1>Loading...</h1></div>;
   }
 
   return (
     <div>
+      {/* ArtNet Output Preview */}
+      {layout && (
+        <div className="preview-strip">
+          <div className="preview-strip-header">
+            <div className="preview-strip-title">ArtNet Output</div>
+          </div>
+          <LiveLightPreview walls={layout.walls} active={isVisible} />
+        </div>
+      )}
+
       <div className="page-header">
         <h1 className="page-title">Schedule</h1>
         <button
@@ -184,7 +263,37 @@ function SchedulerPage() {
         <div className="card-header">
           <h3 className="card-title">Currently Active</h3>
         </div>
-        {activeSchedule ? (
+        {livePreviewActive ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+            <div
+              style={{
+                width: '12px',
+                height: '12px',
+                borderRadius: '50%',
+                backgroundColor: 'var(--warning, #f59e0b)',
+                animation: 'pulse 2s infinite',
+              }}
+            />
+            <div>
+              <strong>Live Preview</strong>
+              <span style={{ color: 'var(--text-secondary)', marginLeft: '0.5rem' }}>
+                ({livePreviewInfo?.type || 'unknown'}{livePreviewInfo?.effectType ? ` - ${livePreviewInfo.effectType}` : ''})
+              </span>
+              <span
+                style={{
+                  backgroundColor: 'var(--warning, #f59e0b)',
+                  color: '#000',
+                  padding: '0.25rem 0.5rem',
+                  borderRadius: '4px',
+                  fontSize: '0.75rem',
+                  marginLeft: '0.5rem',
+                }}
+              >
+                Override
+              </span>
+            </div>
+          </div>
+        ) : activeSchedule ? (
           <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
             <div
               style={{
@@ -268,7 +377,7 @@ function SchedulerPage() {
                 <div className="schedule-item-info">
                   <h4>{getScheduleDisplayName(schedule)}</h4>
                   <p>
-                    {formatDate(schedule.start_date)} - {formatDate(schedule.end_date)}
+                    {formatDate(schedule.start_date, schedule.start_time)} - {formatDate(schedule.end_date, schedule.end_time)}
                     {schedule.priority > 0 && ` • Priority: ${schedule.priority}`}
                   </p>
                   <p style={{ color: 'var(--text-secondary)' }}>Type: {schedule.design_type}</p>
@@ -457,12 +566,34 @@ function SchedulerPage() {
               </div>
 
               <div className="form-group">
+                <label className="form-label" htmlFor="schedule-start-time">Start Time <span style={{ fontWeight: 400, color: 'var(--text-secondary)' }}>({timeZoneHint})</span></label>
+                <input
+                  id="schedule-start-time"
+                  type="time"
+                  className="form-input"
+                  value={startTime}
+                  onChange={(e) => setStartTime(e.target.value)}
+                />
+              </div>
+
+              <div className="form-group">
                 <label className="form-label">End Date</label>
                 <input
                   type="date"
                   className="form-input"
                   value={endDate}
                   onChange={(e) => setEndDate(e.target.value)}
+                />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label" htmlFor="schedule-end-time">End Time <span style={{ fontWeight: 400, color: 'var(--text-secondary)' }}>({timeZoneHint})</span></label>
+                <input
+                  id="schedule-end-time"
+                  type="time"
+                  className="form-input"
+                  value={endTime}
+                  onChange={(e) => setEndTime(e.target.value)}
                 />
               </div>
             </div>
