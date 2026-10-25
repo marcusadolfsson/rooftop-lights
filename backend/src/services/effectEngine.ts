@@ -194,6 +194,16 @@ function maxColor(a: RGBW, b: RGBW): RGBW {
   return { r: Math.max(a.r, b.r), g: Math.max(a.g, b.g), b: Math.max(a.b, b.b), w: Math.max(a.w, b.w) };
 }
 
+/** Legacy Chase params mapped onto Comet: same group size, no tail, one-way laps. */
+function chaseAsComet(effect: MotionEffect): MotionEffect {
+  const p = effect.params ?? {};
+  return {
+    ...effect,
+    type: 'comet',
+    params: { size: p.groupSize ?? 3, tailLength: 0, bounce: false, tailExit: true, pause: p.pause ?? 0, wallIds: p.wallIds },
+  };
+}
+
 /** Wall ids a Per Wall effect is limited to (empty = all walls). */
 function selectedWallIds(effect: MotionEffect): string[] {
   const ids = effect.params?.wallIds;
@@ -400,7 +410,8 @@ export class EffectEngine {
       case 'wave':
         return this.generateWave(effect, frameNum);
       case 'chase':
-        return this.generateChase(effect, frameNum);
+        // Chase was merged into Comet (a chase is a comet with no tail); older designs still render
+        return this.generateComet(chaseAsComet(effect), frameNum);
       case 'converge':
         return this.generateConverge(effect, frameNum);
       case 'twinkle':
@@ -483,7 +494,7 @@ export class EffectEngine {
     const frame = new Map<number, RGBW>();
     const headColor: RGBW = effect.colors[0] || { r: 0, g: 0, b: 0, w: 255 };
     const tailColor: RGBW = effect.colors[1] || headColor;
-    const tailLength = Math.round(num(effect.params?.tailLength, 8, 1, 200));
+    const tailLength = Math.round(num(effect.params?.tailLength, 8, 0, 200));
     const reverse = bool(effect.params?.reverse, false);
     const bounce = bool(effect.params?.bounce, true);
     // Let the head travel past the edge until the whole tail has left the frame before looping/turning
@@ -550,9 +561,10 @@ export class EffectEngine {
           const d = Math.round(movingForward ? headU - u : u - headU);
           // Inside the leading edge everything is full head color; the tail fades behind it
           const t = d < size ? 0 : d - (size - 1);
-          if (d >= 0 && t < tailLength) {
-            const brightness = 1 - (t / tailLength);
-            const colorRatio = t / tailLength;
+          // Tail length 0 is a plain chase: just the head block
+          if (d >= 0 && (d < size || t < tailLength)) {
+            const brightness = tailLength > 0 ? 1 - (t / tailLength) : 1;
+            const colorRatio = tailLength > 0 ? t / tailLength : 0;
             const light = row[j];
             frame.set(light.light_id, {
               r: Math.round((headColor.r * (1 - colorRatio) + tailColor.r * colorRatio) * brightness),
@@ -689,45 +701,6 @@ export class EffectEngine {
             b: Math.round(color.b * brightness),
             w: Math.round(color.w * brightness),
           });
-        }
-      }
-    }
-
-    return frame;
-  }
-
-  // Chase - single light or group chasing around
-  private generateChase(effect: MotionEffect, frameNum: number): Map<number, RGBW> {
-    const frame = new Map<number, RGBW>();
-    const chaseColor: RGBW = effect.colors[0] || { r: 0, g: 0, b: 0, w: 255 };
-    const groupSize = Math.round(num(effect.params?.groupSize, 3, 1, 1000));
-    const step = Math.floor(frameNum / 4);
-    const pause = pauseSteps(effect, 4);
-
-    // Initialize all to off
-    for (const light of this.lights) {
-      frame.set(light.light_id, { r: 0, g: 0, b: 0, w: 0 });
-    }
-
-    for (let y = 0; y < this.rows; y++) {
-      for (const row of this.getSegments(y, effect.scope)) {
-        const size = Math.min(groupSize, row.length);
-        if (pause === 0) {
-          // Continuous lap: the group wraps from the end straight back to the start
-          const pos = step % row.length;
-          for (let g = 0; g < size; g++) {
-            frame.set(row[(pos + g) % row.length].light_id, chaseColor);
-          }
-          continue;
-        }
-        // With a pause the group slides in from the start and fully off the end (no wrap-around),
-        // so nothing is lit at the beginning while the lap finishes
-        const local = cycleStep(step, row.length + size - 1, pause);
-        if (local === null) continue; // pausing after a full lap
-        const pos = local - (size - 1);
-        for (let g = 0; g < size; g++) {
-          const idx = pos + g;
-          if (idx >= 0 && idx < row.length) frame.set(row[idx].light_id, chaseColor);
         }
       }
     }

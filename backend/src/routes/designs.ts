@@ -282,14 +282,14 @@ router.get('/effects/types', (req: Request, res: Response) => {
     {
       type: 'comet',
       name: 'Comet',
-      description: 'A bright comet head with fading tail sweeping back and forth',
+      description: 'A bright head with a fading tail; set Tail length to 0 for a plain chase',
       defaultColors: [
         { r: 0, g: 0, b: 0, w: 255 },
         { r: 0, g: 0, b: 200, w: 0 },
       ],
       params: {
         size: { type: 'number', default: 1, min: 1, max: 10, label: 'Size' },
-        tailLength: { type: 'number', default: 8, min: 2, max: 20, label: 'Tail length' },
+        tailLength: { type: 'number', default: 8, min: 0, max: 20, label: 'Tail length' },
         reverse: { type: 'boolean', default: false },
         bounce: { type: 'boolean', default: true },
         tailExit: { type: 'boolean', default: true, label: 'Tail leaves frame before looping' },
@@ -330,16 +330,6 @@ router.get('/effects/types', (req: Request, res: Response) => {
         bounce: { type: 'boolean', default: false },
         waveHeight: { type: 'number', default: 1.0, min: 0.1, max: 1.0, step: 0.1, label: 'Wave height' },
         angle: { type: 'number', default: 0, min: -180, max: 180, step: 15, label: 'Angle', unit: '°' },
-      },
-    },
-    {
-      type: 'chase',
-      name: 'Chase',
-      description: 'A group of lights chasing around the perimeter',
-      defaultColors: [{ r: 0, g: 0, b: 0, w: 255 }],
-      params: {
-        groupSize: { type: 'number', default: 3, min: 1, max: 10, label: 'Size' },
-        pause: { type: 'number', default: 0, min: 0, max: 30, step: 0.5, label: 'Pause before looping', unit: ' s' },
       },
     },
     {
@@ -464,7 +454,6 @@ router.get('/effects/types', (req: Request, res: Response) => {
     comet: { colorLabels: ['Head', 'Tail'], colorHint: 'The tail fades from the head color toward the tail color' },
     sparkle: { colorLabels: ['Sparkle'] },
     wave: { colorLabels: ['Low', 'High'], colorHint: 'The wave blends between these from its low points to its peaks' },
-    chase: { colorLabels: ['Chaser'] },
     converge: { colorLabels: ['Left', 'Right', 'Meet'], colorHint: 'Meet is shown while the two groups are together in the middle' },
     breathe: { colorLabels: ['Glow'] },
     text: { colorLabels: ['Text'] },

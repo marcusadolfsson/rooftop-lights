@@ -25,11 +25,10 @@ A web app for designing, previewing and scheduling shows on architectural RGBW l
 |---|---|
 | Candy Cane | Diagonal stripes scrolling around the perimeter |
 | Checkerboard | Alternating squares that shift |
-| Comet | Bright head (adjustable size) with a fading tail |
+| Comet | Bright head (adjustable size) with a fading tail; Tail length 0 makes it a chase |
 | Sparkle | Random lights twinkling over a base color |
 | Rainbow | Smooth rainbow cycling across the display |
 | Wave | Sinusoidal brightness wave |
-| Chase | A group of lights chasing around |
 | Meet in the Middle | Two groups start at opposite ends and meet in the middle, with an optional comet tail |
 | Breathe | All lights pulsing together |
 | Text | Scrolling text |
