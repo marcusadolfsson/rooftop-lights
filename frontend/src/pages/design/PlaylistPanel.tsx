@@ -401,7 +401,10 @@ export default function PlaylistPanel({
               >
                 {isPlaying ? STOP_ICON : PLAY_ICON} {isPlaying ? 'Stop' : 'Play'}
               </button>
-              <button className="btn btn-primary btn-sm" onClick={onSave} disabled={items.length === 0}>Save</button>
+              {/* Only offered when there is something new to save */}
+              {items.length > 0 && editor.hasChanges && (
+                <button className="btn btn-primary btn-sm" onClick={onSave}>Save</button>
+              )}
             </div>
           </div>
           <div className="playlist-drop-zone" onDragOver={onEditorDragOver} onDragLeave={onEditorDragLeave} onDrop={onEditorDrop}>

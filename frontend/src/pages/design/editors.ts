@@ -437,6 +437,14 @@ function containsPlaylist(playlists: Playlist[], childId: string, parentId: stri
  * Editor for one kind. `playlists` is every playlist and scene (nested lengths and loop checks
  * need them all); the editor's own saved list is `saved`.
  */
+/** Comparable form of a playlist/scene's contents (item keys and display names don't count). */
+function playlistSnapshot(items: EditingPlaylistItem[], mode: string): string {
+  return JSON.stringify({
+    mode,
+    items: items.map((i) => [i.design_id, i.child_playlist_id, i.duration, i.repeat_mode, i.repeat_count, i.transition]),
+  });
+}
+
 export function usePlaylistEditor({ reload, setError, designs, playlists, kind }: Omit<EditorDeps, 'preview' | 'autoPreview'> & { designs: Design[]; playlists: Playlist[]; kind: PlaylistKind }) {
   const isScene = kind === 'scene';
   const noun = isScene ? 'scene' : 'playlist';
@@ -446,17 +454,21 @@ export function usePlaylistEditor({ reload, setError, designs, playlists, kind }
   const [items, setItems] = useState<EditingPlaylistItem[]>([]);
   const [mode, setMode] = useState<'sequence' | 'random'>('sequence');
   const [dragKey, setDragKey] = useState<string | null>(null);
+  // What was last loaded or saved, to tell whether there is anything to save
+  const [savedSnapshot, setSavedSnapshot] = useState(() => playlistSnapshot([], 'sequence'));
+  const hasChanges = playlistSnapshot(items, mode) !== savedSnapshot;
 
   const startNew = () => {
     setSelectedPlaylist(null);
     setItems([]);
     setMode('sequence');
     setName('');
+    setSavedSnapshot(playlistSnapshot([], 'sequence'));
   };
 
   const load = (playlist: Playlist) => {
     setSelectedPlaylist(playlist);
-    setItems(playlist.items.map((i) => ({
+    const loaded: EditingPlaylistItem[] = playlist.items.map((i) => ({
       key: i.id || newItemKey(),
       design_id: i.design_id,
       child_playlist_id: i.child_playlist_id ?? null,
@@ -466,8 +478,10 @@ export function usePlaylistEditor({ reload, setError, designs, playlists, kind }
       repeat_mode: i.repeat_mode === 'times' ? 'times' : 'seconds',
       repeat_count: i.repeat_count || 1,
       transition: i.transition || 'cut',
-    })));
+    }));
+    setItems(loaded);
     setMode(isScene ? 'sequence' : playlist.play_mode);
+    setSavedSnapshot(playlistSnapshot(loaded, isScene ? 'sequence' : playlist.play_mode));
     setName(playlist.name);
   };
 
@@ -588,6 +602,7 @@ export function usePlaylistEditor({ reload, setError, designs, playlists, kind }
         setSelectedPlaylist(created);
         setName(newName);
       }
+      setSavedSnapshot(playlistSnapshot(items, mode));
       await reload();
       return 'saved';
     } catch (err) {
@@ -654,7 +669,7 @@ export function usePlaylistEditor({ reload, setError, designs, playlists, kind }
 
   return {
     kind, isScene, noun, saved,
-    selectedPlaylist, name, setName, items, mode, setMode, dragKey,
+    selectedPlaylist, name, setName, items, mode, setMode, dragKey, hasChanges,
     addablePlaylists, cycleSeconds, effectiveMode, itemSeconds, totalSeconds, payloadItems,
     startNew, load, addDesign, addNewDesign, addPlaylist, replaceItemDesign, removeItem, updateItem, save, remove, rename, dragStart, dragOver, dragEnd, moveItem,
   };
