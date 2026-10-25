@@ -2469,3 +2469,112 @@ body {
 .playlist-item-disclosure.open svg {
   transform: rotate(90deg);
 }
+
+/* AI prompt modals: example prompts, defective-lights switch, progress note */
+.ai-examples {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  margin: -0.5rem 0 1rem;
+}
+
+.ai-examples-label {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+.ai-example {
+  padding: 0.25rem 0.6rem;
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.ai-example:hover:not(:disabled) {
+  border-color: var(--primary-color);
+}
+
+.ai-defective-toggle .live-preview-toggle span {
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text-primary);
+}
+
+.ai-defective-hint,
+.ai-loading-note {
+  margin: 0.4rem 0 0;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+.ai-loading-note {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 1rem;
+}
+
+/* AI Scene Creator result above the scene editor */
+.ai-scene-result {
+  display: flex;
+  align-items: flex-start;
+  gap: 1rem;
+  margin-bottom: 1rem;
+  border-color: var(--primary-color);
+}
+
+.ai-scene-result-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.ai-scene-result-title {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-weight: 600;
+}
+
+.ai-scene-result-summary {
+  margin: 0.4rem 0 0;
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+}
+
+.ai-scene-result-warnings {
+  margin-top: 0.4rem;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+.ai-scene-result-warnings ul {
+  margin: 0.25rem 0 0 1.1rem;
+  padding: 0;
+}
+
+.ai-scene-result-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
+@media (max-width: 768px) {
+  .ai-scene-result {
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .ai-scene-result-actions {
+    width: 100%;
+  }
+
+  .ai-scene-result-actions .btn {
+    flex: 1;
+    justify-content: center;
+  }
+}

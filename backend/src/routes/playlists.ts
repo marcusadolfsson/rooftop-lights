@@ -5,6 +5,7 @@ import { invalidateSchedule } from '../scheduler/scheduler.js';
 import { getEffectEngine } from '../services/effectEngine.js';
 import { safeParseJSON } from '../services/designValidation.js';
 import { parseFolderField } from '../services/folders.js';
+import { aiErrorResponse, createSceneFromPlan, generateScenePlan, undoGeneratedScene } from '../services/aiSceneCreator.js';
 import {
   buildPlaylistTimeline, buildTimelineItem, nodeFrames, timelineFrames, wouldCreateCycle,
   TIMELINE_FPS, TimelineItemRow, TimelineSource,
@@ -215,6 +216,72 @@ router.get('/', (req: Request, res: Response) => {
     : db.prepare('SELECT * FROM playlists WHERE kind = ? ORDER BY name').all(kind);
   const src = dbTimelineSource();
   res.json(playlists.map((playlist) => withItems(playlist, src)));
+});
+
+// AI Scene Creator: plan a scene from a description, then save its new designs and the scene
+// (in the requested folder, or one named after the scene). Returns the scene as GET returns it.
+router.post('/ai/generate', async (req: Request, res: Response) => {
+  const { description, folder, considerDefective = true } = req.body ?? {};
+
+  if (typeof description !== 'string' || !description.trim()) {
+    res.status(400).json({ error: 'Description is required' });
+    return;
+  }
+  if (description.length > 1000) {
+    res.status(400).json({ error: 'Description too long (max 1000 characters)' });
+    return;
+  }
+  // Check the folder before paying for a generation
+  if (folder !== undefined) {
+    const parsed = parseFolderField(folder);
+    if ('error' in parsed) {
+      res.status(400).json({ error: parsed.error });
+      return;
+    }
+  }
+  if (typeof considerDefective !== 'boolean') {
+    res.status(400).json({ error: 'considerDefective must be true or false' });
+    return;
+  }
+  if (!process.env.ANTHROPIC_API_KEY) {
+    res.status(503).json({ error: 'AI not configured: ANTHROPIC_API_KEY is not set on the server.', aiEnabled: false });
+    return;
+  }
+
+  let plan;
+  try {
+    plan = await generateScenePlan(description.trim(), { considerDefective });
+  } catch (error) {
+    console.error('AI scene generation error:', error);
+    const { status, error: message } = aiErrorResponse(error);
+    res.status(status).json({ success: false, error: message });
+    return;
+  }
+
+  const result = createSceneFromPlan(plan, { description: description.trim(), folder });
+  if (!result.ok) {
+    res.status(result.status).json({ success: false, error: result.error, warnings: result.warnings });
+    return;
+  }
+  const scene = getDatabase().prepare('SELECT * FROM playlists WHERE id = ?').get(result.sceneId);
+  res.json({
+    success: true,
+    scene: withItems(scene, dbTimelineSource()),
+    designIds: result.designIds,
+    summary: result.summary,
+    warnings: result.warnings,
+  });
+});
+
+// Discard a scene the AI Scene Creator just made, with the designs it created (designIds) that
+// nothing else uses
+router.post('/:id/ai-undo', (req: Request, res: Response) => {
+  const result = undoGeneratedScene(req.params.id, (req.body ?? {}).designIds);
+  if (!result.ok) {
+    res.status(result.status).json({ error: result.error });
+    return;
+  }
+  res.json({ success: true, deletedDesignIds: result.deletedDesignIds, keptDesignIds: result.keptDesignIds });
 });
 
 // Get a single playlist

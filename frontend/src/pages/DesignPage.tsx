@@ -30,6 +30,30 @@ function readShowDefective(): boolean {
   try { return localStorage.getItem('showDefective') === 'true'; } catch { return false; }
 }
 
+// "Account for defective lights" in the AI prompts; on unless turned off in this browser
+const AI_DEFECTIVE_KEY = 'aiConsiderDefective';
+function readAiConsiderDefective(): boolean {
+  try { return localStorage.getItem(AI_DEFECTIVE_KEY) !== 'false'; } catch { return true; }
+}
+
+const SPARKLE_ICON = <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 16.8l-6.2 4.5 2.4-7.4L2 9.4h7.6z"/></svg>;
+
+const SCENE_AI_EXAMPLES = [
+  'Spooky Halloween intro',
+  'Calm sunset, then stars',
+  'Upbeat party: chases, then fireworks',
+  'Christmas: candy cane, then twinkling snow',
+];
+
+// The scene the AI Scene Creator just made, until it is kept, undone, or another scene is opened
+interface AiSceneOutcome {
+  sceneId: string;
+  name: string;
+  designIds: string[];
+  summary: string;
+  warnings: string[];
+}
+
 /**
  * AI static designs come back as an array indexed by light_id - 1, or (newer
  * backends) as a map keyed by light_id. Either way, keep only lights that exist.
@@ -78,6 +102,22 @@ function DesignPage() {
   const [showAiPanel, setShowAiPanel] = useState(false);
   const [showAiEditPanel, setShowAiEditPanel] = useState(false);
   const [aiEditDescription, setAiEditDescription] = useState('');
+  const [aiConsiderDefective, setAiConsiderDefectiveState] = useState(readAiConsiderDefective);
+  const setAiConsiderDefective = (value: boolean) => {
+    setAiConsiderDefectiveState(value);
+    try { localStorage.setItem(AI_DEFECTIVE_KEY, String(value)); } catch { /* storage unavailable */ }
+  };
+
+  // AI Scene Creator
+  const [showSceneAi, setShowSceneAi] = useState(false);
+  const [sceneAiDescription, setSceneAiDescription] = useState('');
+  const [sceneAiFolder, setSceneAiFolder] = useState(''); // '' = a folder named after the scene
+  const [sceneAiLoading, setSceneAiLoading] = useState(false);
+  const [sceneAiError, setSceneAiError] = useState<string | null>(null);
+  const [sceneAiOutcome, setSceneAiOutcome] = useState<AiSceneOutcome | null>(null);
+  const [sceneAiUndoing, setSceneAiUndoing] = useState(false);
+  // Bumped to remount the scene panel (closing any inline editor) when a generated scene opens
+  const [scenePanelEpoch, setScenePanelEpoch] = useState(0);
 
   // Only the first load shows the loading screen; later refreshes keep the page
   // (and the 3D canvas) mounted and update in the background
@@ -412,7 +452,7 @@ function DesignPage() {
     setAiLoading(true);
     setAiError(null);
     try {
-      const result = await aiAPI.generate({ description: aiDescription, mode: 'create' });
+      const result = await aiAPI.generate({ description: aiDescription, mode: 'create', considerDefective: aiConsiderDefective });
       if (result.success && result.design) {
         const design = result.design;
         if (design.type === 'static') {
@@ -466,7 +506,7 @@ function DesignPage() {
             scope: motionEditor.scope,
             params: motionEditor.params,
           };
-      const result = await aiAPI.generate({ description: aiEditDescription, currentDesignData, mode: 'modify' });
+      const result = await aiAPI.generate({ description: aiEditDescription, currentDesignData, mode: 'modify', considerDefective: aiConsiderDefective });
 
       if (result.success && result.design) {
         const design = result.design;
@@ -500,6 +540,75 @@ function DesignPage() {
     }
   };
 
+  // --- AI Scene Creator ---
+
+  const openSceneAi = () => { setSceneAiError(null); setShowSceneAi(true); };
+
+  const generateAIScene = async () => {
+    const description = sceneAiDescription.trim();
+    if (!description) return;
+    // The new scene replaces what the scene editor holds
+    if (sceneEditor.hasChanges && sceneEditor.items.length > 0 && !confirm('Discard the unsaved changes to the scene you are editing?')) return;
+    if (!confirmLeaveInline()) return;
+    setSceneAiLoading(true);
+    setSceneAiError(null);
+    try {
+      const result = await playlistsAPI.aiGenerate({
+        description,
+        folder: sceneAiFolder || undefined,
+        considerDefective: aiConsiderDefective,
+      });
+      inlineDirtyRef.current = false;
+      if (playback?.kind === 'scene') handleStopPlayback();
+      await loadData();
+      setScenePanelEpoch((n) => n + 1);
+      sceneEditor.load(result.scene);
+      setActiveTab('scenes');
+      setSceneAiOutcome({
+        sceneId: result.scene.id,
+        name: result.scene.name,
+        designIds: result.designIds,
+        summary: result.summary,
+        warnings: result.warnings ?? [],
+      });
+      setSceneAiDescription('');
+      setShowSceneAi(false);
+      setError(null);
+    } catch (err) {
+      setSceneAiError(err instanceof Error ? err.message : 'Failed to generate scene');
+    } finally {
+      setSceneAiLoading(false);
+    }
+  };
+
+  // Undo: delete the generated scene and the designs made for it (ones nothing else uses)
+  const undoAIScene = async () => {
+    const outcome = sceneAiOutcome;
+    if (!outcome || sceneAiUndoing) return;
+    const designs = outcome.designIds.length;
+    if (!confirm(`Discard the scene "${outcome.name}"${designs ? ` and the ${designs} design${designs === 1 ? '' : 's'} made for it` : ''}?`)) return;
+    setSceneAiUndoing(true);
+    try {
+      if (playback?.kind === 'scene') handleStopPlayback();
+      await playlistsAPI.aiUndo(outcome.sceneId, outcome.designIds);
+      if (sceneEditor.selectedPlaylist?.id === outcome.sceneId) sceneEditor.startNew();
+      setScenePanelEpoch((n) => n + 1);
+      setSceneAiOutcome(null);
+      await loadData();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to undo the generated scene');
+    } finally {
+      setSceneAiUndoing(false);
+    }
+  };
+
+  // The outcome banner belongs to the generated scene; opening another one dismisses it
+  const shownSceneAiOutcome = sceneAiOutcome && activeTab === 'scenes' && sceneEditor.selectedPlaylist?.id === sceneAiOutcome.sceneId
+    ? sceneAiOutcome : null;
+  useEffect(() => {
+    if (sceneAiOutcome && sceneEditor.selectedPlaylist?.id !== sceneAiOutcome.sceneId) setSceneAiOutcome(null);
+  }, [sceneAiOutcome, sceneEditor.selectedPlaylist]);
+
   if (loading) {
     return <div className="page-header"><h1>Loading...</h1></div>;
   }
@@ -522,8 +631,14 @@ function DesignPage() {
       </div>
       {aiEnabled && (activeTab === 'static' || activeTab === 'motion') && (
         <button className={`btn btn-sm ${showAiPanel ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setShowAiPanel(!showAiPanel)} style={{ width: '100%' }}>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 16.8l-6.2 4.5 2.4-7.4L2 9.4h7.6z"/></svg>
+          {SPARKLE_ICON}
           AI Designer
+        </button>
+      )}
+      {aiEnabled && activeTab === 'scenes' && (
+        <button className={`btn btn-sm ${showSceneAi ? 'btn-primary' : 'btn-secondary'}`} onClick={openSceneAi} style={{ width: '100%' }}>
+          {SPARKLE_ICON}
+          AI Scene Creator
         </button>
       )}
     </>
@@ -615,6 +730,8 @@ function DesignPage() {
           loadingLabel="Generating..."
           onSubmit={generateAIDesign}
           onClose={() => setShowAiPanel(false)}
+          considerDefective={aiConsiderDefective}
+          onConsiderDefectiveChange={setAiConsiderDefective}
         />
       )}
 
@@ -637,7 +754,42 @@ function DesignPage() {
           loadingLabel="Applying..."
           onSubmit={editAIDesign}
           onClose={() => setShowAiEditPanel(false)}
+          considerDefective={aiConsiderDefective}
+          onConsiderDefectiveChange={setAiConsiderDefective}
         />
+      )}
+
+      {showSceneAi && aiEnabled && (
+        <AiPromptModal
+          title="AI Scene Creator"
+          intro={
+            <p style={{ marginBottom: '1rem', color: 'var(--text-secondary)' }}>
+              Describe a scene and AI will plan it: a sequence of designs (built-in effects, still looks, or your saved designs) with timing and transitions. New designs and the scene are saved together in a folder.
+            </p>
+          }
+          label="Describe your scene"
+          placeholder="e.g., 'A calm sunset fading to deep blue, then twinkling stars'"
+          value={sceneAiDescription}
+          onChange={setSceneAiDescription}
+          loading={sceneAiLoading}
+          error={sceneAiError}
+          submitLabel="Create Scene"
+          loadingLabel="Creating..."
+          loadingNote="Planning the scene and its designs. This usually takes 20-60 seconds."
+          onSubmit={generateAIScene}
+          onClose={() => setShowSceneAi(false)}
+          examples={SCENE_AI_EXAMPLES}
+          considerDefective={aiConsiderDefective}
+          onConsiderDefectiveChange={setAiConsiderDefective}
+        >
+          <div className="form-group">
+            <label className="form-label" htmlFor="scene-ai-folder">Folder</label>
+            <select id="scene-ai-folder" className="form-select" value={sceneAiFolder} onChange={(e) => setSceneAiFolder(e.target.value)} disabled={sceneAiLoading}>
+              <option value="">New folder named after the scene</option>
+              {allFolders.map((f) => <option key={f} value={f}>{f}</option>)}
+            </select>
+          </div>
+        </AiPromptModal>
       )}
 
       {error && (
@@ -686,10 +838,37 @@ function DesignPage() {
         />
       )}
 
+      {shownSceneAiOutcome && (
+        <div className="card ai-scene-result" role="status" aria-label="AI Scene Creator result">
+          <div className="ai-scene-result-body">
+            <div className="ai-scene-result-title">{SPARKLE_ICON} Created “{shownSceneAiOutcome.name}”</div>
+            {shownSceneAiOutcome.summary && <p className="ai-scene-result-summary">{shownSceneAiOutcome.summary}</p>}
+            {shownSceneAiOutcome.warnings.length > 0 && (
+              <details className="ai-scene-result-warnings">
+                <summary>{shownSceneAiOutcome.warnings.length} adjustment{shownSceneAiOutcome.warnings.length === 1 ? '' : 's'} to the AI's plan</summary>
+                <ul>{shownSceneAiOutcome.warnings.map((w, i) => <li key={i}>{w}</li>)}</ul>
+              </details>
+            )}
+          </div>
+          <div className="ai-scene-result-actions">
+            <button
+              className={`btn btn-sm ${playback?.kind === 'scene' ? 'btn-primary' : 'btn-secondary'}`}
+              onClick={playback?.kind === 'scene' ? handleStopPlayback : () => handlePlay('scene', 0)}
+            >
+              {playback?.kind === 'scene' ? 'Stop' : 'Play'}
+            </button>
+            <button className="btn btn-sm btn-danger" onClick={undoAIScene} disabled={sceneAiUndoing} title="Delete this scene and the designs made for it">
+              {sceneAiUndoing ? 'Undoing...' : 'Undo'}
+            </button>
+            <button className="btn btn-sm btn-secondary" onClick={() => setSceneAiOutcome(null)} title="Keep the scene and hide this message">Keep</button>
+          </div>
+        </div>
+      )}
+
       {(activeTab === 'scenes' || activeTab === 'playlist') && (
         <PlaylistPanel
           // Separate instances so per-panel state (focus, collapsed list) doesn't carry over
-          key={activeTab}
+          key={activeTab === 'scenes' ? `scenes-${scenePanelEpoch}` : activeTab}
           editor={activeTab === 'scenes' ? sceneEditor : playlistEditor}
           designs={designs}
           playlists={playlists}

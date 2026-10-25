@@ -141,6 +141,16 @@ export interface PlaylistItem {
 }
 
 /** What the API accepts for a playlist item. Older clients send only design_id + duration. */
+/** POST /playlists/ai/generate: the saved scene, the designs made for it, and the model's summary. */
+export interface AiSceneResult {
+  success: boolean;
+  scene: Playlist;
+  designIds: string[];
+  summary: string;
+  // Plan items that were skipped or adjusted (unknown design, code that didn't compile, clamped params)
+  warnings: string[];
+}
+
 export interface PlaylistItemInput {
   design_id?: string | null;
   child_playlist_id?: string | null;

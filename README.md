@@ -59,6 +59,10 @@ In the scene and playlist editors, **Play** plays what is in the editor right no
 
 **AI designer.** Describe a show in plain language ("a warm sunset from orange in the west to purple in the east") and Claude creates a new design, modifies an existing one, or writes a custom animation. It knows the layout, the available effects and your saved designs. This feature is optional and only appears when `ANTHROPIC_API_KEY` is set.
 
+**AI Scene Creator.** In the Scenes tab, **AI Scene Creator** plans a whole scene from a description ("spooky Halloween intro", "calm sunset, then stars"). Claude picks an ordered list of designs: your saved designs where they fit, new designs from the built-in effects (with their params, colors and speed), still per-wall designs, and custom code only when no built-in effect can do it. It also sets each item's timing (whole cycles or seconds) and transition, aiming for about 20 to 90 seconds unless you ask for something else. The server checks the plan before saving anything: params are clamped to their ranges, unknown design ids and code that doesn't compile are skipped (listed as adjustments), and the new designs and the scene are saved together in the folder you picked, or in a folder named after the scene. The new scene opens in the editor with the AI's summary, **Play**, and **Undo**, which deletes the scene and the designs made for it that nothing else uses.
+
+**Defective lights in AI prompts.** The AI Designer, its edit prompt and the AI Scene Creator have an **Account for defective lights** switch (on by default, remembered per browser). On, Claude gets the map of dead channels and picks colors that still read well on the working ones. Off, it treats every channel as working.
+
 ![AI design generator](docs/screenshots/ai-designer.png)
 
 ### Preview
@@ -149,14 +153,22 @@ cd backend && npm install && npm run dev     # API on :3030
 cd frontend && npm install && npm run dev    # UI on :5173, proxies /api and /ws to the backend
 ```
 
+### Tests
+
+```bash
+cd backend && TEST_DB=/path/to/a/copy/of/rooftop-lights.db npm test
+```
+
+The tests copy that database again to a temp file, so the file you pass is never changed.
+
 ### Environment variables
 
 | Variable | Purpose | Default |
 |---|---|---|
 | `PORT` | HTTP port | `3030` |
 | `DATABASE_PATH` | SQLite file | `/app/data/rooftop-lights.db` |
-| `ANTHROPIC_API_KEY` | Enables the AI designer | unset |
-| `ANTHROPIC_MODEL` | Claude model for the AI designer | `claude-sonnet-5-5` |
+| `ANTHROPIC_API_KEY` | Enables the AI designer and AI Scene Creator | unset |
+| `ANTHROPIC_MODEL` | Claude model for the AI designer and AI Scene Creator | `claude-sonnet-5-5` |
 | `TZ` | Timezone used to evaluate schedule times | `America/New_York` (set in the compose files) |
 | `CORS_ORIGINS` | Extra origins allowed to call the API, comma-separated | same origin only |
 | `AI_CODE_TIMEOUT_MS` | Time budget per frame for AI effect code | `20` |
@@ -184,7 +196,7 @@ These protections are built in:
 |---|---|
 | Layout | `GET /api/layout/layout`, `GET/POST /api/layout/walls`, `PUT/DELETE /api/layout/walls/:id`, `POST /api/layout/walls/reorder`, `POST /api/layout/lights`, `PUT/DELETE /api/layout/lights/:id`, `GET/POST /api/layout/groups`, `PUT/DELETE /api/layout/groups/:id` |
 | Designs | `GET/POST /api/designs`, `GET/PUT/DELETE /api/designs/:id`, `POST /api/designs/:id/copy`, `GET /api/designs/effects/types` |
-| AI | `GET /api/designs/ai/status`, `POST /api/designs/ai/generate` |
+| AI | `GET /api/designs/ai/status`, `POST /api/designs/ai/generate` `{ description, considerDefective? }`, `POST /api/playlists/ai/generate` `{ description, folder?, considerDefective? }` (plans and saves a scene), `POST /api/playlists/:id/ai-undo` `{ designIds }` |
 | Playlists & scenes | `GET /api/playlists[?kind=scene\|playlist]`, `POST /api/playlists`, `GET/PUT/DELETE /api/playlists/:id`, `POST /api/playlists/:id/convert`, `POST /api/playlists/:id/items`, `PUT/DELETE /api/playlists/:id/items/:itemId`, `POST /api/playlists/:id/reorder` |
 | Folders | `GET /api/folders` (names with counts per kind), `PUT /api/folders/:name` `{ name }` (rename or merge), `DELETE /api/folders/:name` (unfile); designs and playlists take `folder` on POST/PUT |
 | Schedules | `GET/POST /api/schedules`, `PUT/DELETE /api/schedules/:id`, `GET/POST /api/schedules/default`, `GET /api/schedules/active` |

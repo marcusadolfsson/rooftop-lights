@@ -14,6 +14,7 @@ import type {
   MotionDesignData,
   RGBW,
   FolderSummary,
+  AiSceneResult,
 } from '../types';
 
 const API_BASE = '/api';
@@ -176,6 +177,21 @@ export const playlistsAPI = {
       body: JSON.stringify({ folder }),
     }),
 
+  // AI Scene Creator: plans and saves a scene (and its new designs) in `folder`, or in a folder
+  // named after the scene
+  aiGenerate: (data: { description: string; folder?: string | null; considerDefective?: boolean }) =>
+    fetchJSON<AiSceneResult>('/playlists/ai/generate', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  // Discards a generated scene and the designs it created (those nothing else uses)
+  aiUndo: (id: string, designIds: string[]) =>
+    fetchJSON<{ success: boolean; deletedDesignIds: string[]; keptDesignIds: string[] }>(`/playlists/${id}/ai-undo`, {
+      method: 'POST',
+      body: JSON.stringify({ designIds }),
+    }),
+
   // Items stay; a playlist can only become a scene when it holds designs only
   convert: (id: string, kind: PlaylistKind) =>
     fetchJSON<Playlist>(`/playlists/${id}/convert`, {
@@ -289,6 +305,8 @@ export const aiAPI = {
 
   generate: (options: {
     description: string;
+    // Design around dead channels (default true); false treats every channel as working
+    considerDefective?: boolean;
     baseDesignId?: string;
     mode?: 'create' | 'modify' | 'derivative';
     currentDesignData?: {

@@ -72,10 +72,24 @@ interface AiPromptModalProps {
   loadingLabel: string;
   onSubmit: () => void;
   onClose: () => void;
+  // "Account for defective lights" switch (shown when onConsiderDefectiveChange is given)
+  considerDefective?: boolean;
+  onConsiderDefectiveChange?: (value: boolean) => void;
+  // Example prompts; clicking one fills the textarea
+  examples?: string[];
+  // Shown under the spinner while generating (e.g. how long it usually takes)
+  loadingNote?: string;
+  // Extra fields under the description (e.g. a folder picker)
+  children?: ReactNode;
 }
 
+const SPINNER = <svg className="spinning" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" aria-hidden="true"><path d="M21 12a9 9 0 11-6.2-8.56"/></svg>;
+
 /** Prompt modal used for both "generate" and "edit" AI requests. */
-export function AiPromptModal({ title, intro, label, placeholder, value, onChange, loading, error, submitLabel, loadingLabel, onSubmit, onClose }: AiPromptModalProps) {
+export function AiPromptModal({
+  title, intro, label, placeholder, value, onChange, loading, error, submitLabel, loadingLabel, onSubmit, onClose,
+  considerDefective, onConsiderDefectiveChange, examples, loadingNote, children,
+}: AiPromptModalProps) {
   const close = () => { if (!loading) onClose(); };
   useEscapeKey(true, close);
   return (
@@ -102,6 +116,39 @@ export function AiPromptModal({ title, intro, label, placeholder, value, onChang
             autoFocus
           />
         </div>
+        {examples && examples.length > 0 && (
+          <div className="ai-examples" role="group" aria-label="Example prompts">
+            <span className="ai-examples-label">Try:</span>
+            {examples.map((example) => (
+              <button key={example} type="button" className="ai-example" onClick={() => onChange(example)} disabled={loading}>
+                {example}
+              </button>
+            ))}
+          </div>
+        )}
+        {children}
+        {onConsiderDefectiveChange && (
+          <div className="form-group ai-defective-toggle">
+            <div className="live-preview-toggle">
+              <button
+                type="button"
+                role="switch"
+                aria-checked={considerDefective !== false}
+                aria-labelledby="ai-consider-defective"
+                className={`toggle-switch ${considerDefective !== false ? 'active' : ''}`}
+                onClick={() => onConsiderDefectiveChange(considerDefective === false)}
+                disabled={loading}
+              />
+              <span id="ai-consider-defective">Account for defective lights</span>
+            </div>
+            <p className="ai-defective-hint">
+              {considerDefective !== false
+                ? 'Colors are picked to read well on the channels that still work.'
+                : 'Every channel is treated as working; colors may look different on lights with dead channels.'}
+            </p>
+          </div>
+        )}
+        {loading && loadingNote && <p className="ai-loading-note" role="status">{SPINNER} {loadingNote}</p>}
         {error && (
           <div style={{ color: 'var(--error)', marginBottom: '1rem' }} role="alert">
             {error}
@@ -111,7 +158,7 @@ export function AiPromptModal({ title, intro, label, placeholder, value, onChang
         <div className="modal-footer">
           <button className="btn btn-secondary" onClick={close}>Cancel</button>
           <button className="btn btn-primary" onClick={onSubmit} disabled={loading || !value.trim()}>
-            {loading ? loadingLabel : submitLabel}
+            {loading ? <>{SPINNER} {loadingLabel}</> : submitLabel}
           </button>
         </div>
       </div>

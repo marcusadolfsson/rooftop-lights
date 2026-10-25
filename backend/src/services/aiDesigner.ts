@@ -20,7 +20,7 @@ function modelId(): string {
 // recommended fallback model instead of returning a refusal.
 const SERVER_FALLBACK_MODELS = new Set(['claude-sonnet-5-5', 'claude-opus-5-5', 'claude-opus-5', 'claude-fable-5-1']);
 
-const COLOR_SCHEMA = {
+export const COLOR_SCHEMA = {
   type: 'object',
   properties: {
     r: { type: 'integer' },
@@ -71,7 +71,7 @@ const DESIGN_OUTPUT_SCHEMA = {
  * tolerant fallback (markdown fences, leading prose) for models/configs where
  * output_config.format is not applied.
  */
-function parseModelJSON(text: string): Record<string, unknown> {
+export function parseModelJSON(text: string): Record<string, unknown> {
   const attempts: string[] = [text.trim()];
   const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);
   if (fenced) attempts.push(fenced[1].trim());
@@ -110,6 +110,57 @@ function normalizeModelOutput(raw: Record<string, unknown>): Record<string, unkn
   return out;
 }
 
+export interface StructuredRequest {
+  system: string;
+  user: string;
+  // JSON schema the reply must follow (output_config.format)
+  schema: object;
+  // What is being generated, for error messages ("design", "scene")
+  subject: string;
+  maxTokens?: number;
+}
+
+/**
+ * One Claude request whose reply is a JSON object following `schema`. Throws an Error with a
+ * user-facing message on a refusal, a cut-off reply or an unparseable one.
+ */
+export async function requestStructuredJSON({ system, user, schema, subject, maxTokens = 32000 }: StructuredRequest): Promise<Record<string, unknown>> {
+  const model = modelId();
+  const useFallbacks = SERVER_FALLBACK_MODELS.has(model);
+
+  // Streaming + finalMessage(): generous max_tokens without HTTP timeouts.
+  // output_config.format constrains the reply to the schema.
+  const response = await client().beta.messages.stream({
+    model,
+    max_tokens: maxTokens,
+    system,
+    messages: [{ role: 'user', content: user }],
+    output_config: {
+      format: { type: 'json_schema', schema: schema as unknown as Record<string, unknown> },
+    },
+    ...(useFallbacks
+      ? { betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' as const }
+      : {}),
+  }).finalMessage();
+
+  if (response.stop_reason === 'refusal') {
+    throw new Error(`The AI declined to generate this ${subject}. Try rephrasing the request.`);
+  }
+  if (response.stop_reason === 'max_tokens') {
+    throw new Error('AI response was cut off (too long). Try a simpler request.');
+  }
+
+  // Extract text content from response
+  const text = response.content
+    .filter((c): c is Extract<typeof c, { type: 'text' }> => c.type === 'text')
+    .map(c => c.text)
+    .join('');
+  if (!text.trim()) {
+    throw new Error('No text response from AI');
+  }
+  return parseModelJSON(text);
+}
+
 interface RGBWColor {
   r: number;
   g: number;
@@ -146,7 +197,7 @@ interface StoredDesign {
 }
 
 // Get the light layout context for the AI
-interface WallInfo {
+export interface WallInfo {
   id: string;
   name: string;
   width: number;
@@ -154,7 +205,7 @@ interface WallInfo {
   position: number;
 }
 
-interface LightInfo {
+export interface LightInfo {
   light_id: number;
   wall_id: string;
   wall_name: string;
@@ -164,7 +215,7 @@ interface LightInfo {
 }
 
 // Get walls and lights from DB (cached per call)
-function getLayoutData(): { walls: WallInfo[]; lights: LightInfo[] } {
+export function getLayoutData(): { walls: WallInfo[]; lights: LightInfo[] } {
   const db = getDatabase();
   const walls = db.prepare('SELECT * FROM walls ORDER BY position').all() as WallInfo[];
   const lights = db.prepare(`
@@ -196,6 +247,38 @@ function wallGridToColorMap(
   return colorMap;
 }
 
+/** A color with every channel a whole number from 0 to 255 (missing or bad channels are 0). */
+export function clampColor(c: unknown): RGBWColor {
+  const o = (c && typeof c === 'object' ? c : {}) as Record<string, unknown>;
+  const ch = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? Math.max(0, Math.min(255, Math.round(v))) : 0);
+  return { r: ch(o.r), g: ch(o.g), b: ch(o.b), w: ch(o.w) };
+}
+
+/**
+ * Per-wall grids from the model (keyed by wall name, rows[y][x]) to a static design's color map
+ * keyed by light_id. Missing walls / rows are black, short rows repeat their last color, long
+ * rows are trimmed and every channel is clamped to 0-255.
+ */
+export function wallGridsToColorMap(
+  wallGrids: Record<string, unknown>,
+  walls: WallInfo[],
+  lights: LightInfo[]
+): Record<number, RGBWColor> {
+  const black = (): RGBWColor => ({ r: 0, g: 0, b: 0, w: 0 });
+  const grids: Record<string, RGBWColor[][]> = {};
+  for (const wall of walls) {
+    const grid = wallGrids[wall.name];
+    grids[wall.name] = Array.from({ length: wall.height }, (_, y) => {
+      const row = Array.isArray(grid) && Array.isArray(grid[y]) ? (grid[y] as unknown[]) : [];
+      return Array.from({ length: wall.width }, (_, x) =>
+        x < row.length ? clampColor(row[x]) : row.length > 0 ? clampColor(row[row.length - 1]) : black()
+      );
+    });
+  }
+  // Keyed by light_id (covers every configured light, whatever its id)
+  return wallGridToColorMap(grids, walls, lights);
+}
+
 // Dead-light counts per channel (how many lights can't show r, g, b, w)
 function deadChannelCounts(lights: LightInfo[]): Record<'r' | 'g' | 'b' | 'w', number> {
   const counts = { r: 0, g: 0, b: 0, w: 0 };
@@ -214,7 +297,7 @@ function mostWorkingColorChannel(lights: LightInfo[]): string {
 }
 
 // Compact per-wall map of dead channels, e.g. "y=2: 0:gb 1:- 2:r 3:x ..." so the model can design around them
-function getDefectiveContext(walls: WallInfo[], lights: LightInfo[]): string {
+export function getDefectiveContext(walls: WallInfo[], lights: LightInfo[]): string {
   const broken = lights.filter(l => l.defective_channels);
   if (broken.length === 0) return '- All channels on all lights work.';
   // "x" = matrix hole (no light at that position), "-" = a light with every channel working
@@ -237,12 +320,12 @@ ${perWall}`;
 }
 
 // Tallest wall, which is how many rows the roof has
-function maxRows(walls: WallInfo[]): number {
+export function maxRows(walls: WallInfo[]): number {
   return Math.max(1, ...walls.map(w => w.height));
 }
 
 // "y=0 (bottom), y=1 (middle), y=2 (top)" for however many rows there are
-function rowNames(rows: number): string {
+export function rowNames(rows: number): string {
   if (rows === 1) return 'y=0 (the only row)';
   return Array.from({ length: rows }, (_, y) =>
     `y=${y}${y === 0 ? ' (bottom)' : y === rows - 1 ? ' (top)' : rows === 3 ? ' (middle)' : ''}`
@@ -250,7 +333,7 @@ function rowNames(rows: number): string {
 }
 
 // Per-wall grid sizes for static designs, from the walls table
-function getGridLayoutContext(walls: WallInfo[]): string {
+export function getGridLayoutContext(walls: WallInfo[]): string {
   const rows = maxRows(walls);
   const sameHeight = walls.every(w => w.height === rows);
   const lines = walls.map(w =>
@@ -263,20 +346,21 @@ function getGridLayoutContext(walls: WallInfo[]): string {
 }
 
 // The "walls" part of the static RESPONSE FORMAT example, one entry per configured wall
-function getStaticExampleWalls(walls: WallInfo[]): string {
+export function getStaticExampleWalls(walls: WallInfo[]): string {
   return walls.map((w, i) => {
     const rows = Array.from({ length: w.height }, () => `[${w.width} color${w.width === 1 ? '' : 's'}]`).join(', ');
     return `    { "wall": "${w.name}", "rows": [ ${rows} ] }${i < walls.length - 1 ? ',' : ''}`;
   }).join('\n');
 }
 
-function getLightLayoutContext(): string {
-  const { walls, lights } = getLayoutData();
-
+/**
+ * The roof layout and its dead channels, for any AI prompt that picks colors or positions. With
+ * considerDefective false (the user's "Account for defective lights" toggle off) the dead-channel
+ * map is left out and every channel is treated as working.
+ */
+export function getLayoutBasicsContext(walls: WallInfo[], lights: LightInfo[], considerDefective = true): string {
   const totalLights = lights.length;
-  const defectiveContext = getDefectiveContext(walls, lights);
   const rows = maxRows(walls);
-  const totalWidth = walls.reduce((s, w) => s + w.width, 0);
 
   const wallDescriptions = walls.map(w =>
     `  - ${w.name}: ${w.width} columns x ${w.height} rows (${w.width * w.height} lights)`
@@ -290,17 +374,27 @@ LIGHT LAYOUT:
 ${wallDescriptions}
 - Rows: ${rowNames(rows)}
 - Columns: x=0 is left (viewed from outside)
+${considerDefective ? getDefectiveGuidance(walls, lights) : `
+CHANNELS:
+- Treat every channel (R, G, B and W) on every light as working: the user chose not to account for defective lights. Use whatever colors best fit the request.
+`}`;
+}
 
+function getDefectiveGuidance(walls: WallInfo[], lights: LightInfo[]): string {
+  return `
 DEFECTIVE CHANNELS (hardware faults — dead channels always output 0, whatever you send):
-${defectiveContext}
+${getDefectiveContext(walls, lights)}
 - Design for what the lights can actually show. A color that only uses dead channels comes out dark on that light, and a mixed color loses its dead components (e.g. purple on a light with dead blue shows red).
 - When the requested look depends on dead channels, pick colors that still read well on the working channels (the W channel is a clean white; ${mostWorkingColorChannel(lights)} is the most widely working color channel), unless the user explicitly asks to ignore defects.
 - In motion code, each light's dead channels are available as L.dead (a string like "gb"; "" when all work) so the animation can adapt per light.
+`;
+}
 
-MOTION DESIGN FORMAT:
-All motion designs use effect: "ai" with custom JavaScript animation code.
-You write the animation logic — you can create ANYTHING: comets, waves, games, physics, text, patterns, etc.
-
+/** How to write an "ai" motion design: its fields, the ctx object, scope handling, rules and examples. */
+export function getAICodeContext(walls: WallInfo[], considerDefective = true): string {
+  const rows = maxRows(walls);
+  const totalWidth = walls.reduce((s, w) => s + w.width, 0);
+  return `
 Structure:
 - "effect": always "ai"
 - "colors": array of RGBW color objects the user can edit after generation
@@ -320,7 +414,7 @@ CONTEXT OBJECT (ctx):
     .y — row (${rowNames(rows)})
     .wallIndex — which wall (0-${Math.max(0, walls.length - 1)})
     .cx — continuous x across all walls (0 to width-1)
-    .dead — dead channels on this light, e.g. "gb" ("" when all channels work)
+    .dead — dead channels on this light, e.g. "gb" ("" when all channels work)${considerDefective ? '' : ' (you do not need it: treat all channels as working)'}
 - ctx.walls: array of {name, width, height, groupId} — wall info (groupId groups walls together)
 - ctx.width: total columns across all walls (${totalWidth})
 - ctx.height: max rows (${rows})
@@ -348,6 +442,15 @@ EXAMPLE — Scope-aware bouncing comet (works with all/wall/group):
 EXAMPLE — Snake game (green snake on black):
 "code": "var out = {};\\nvar snakeColor = ctx.colors[0] || {r:0,g:255,b:0,w:0};\\nvar foodColor = ctx.colors[1] || {r:255,g:0,b:0,w:0};\\nvar len = ctx.width;\\nvar snakeLen = 6;\\nvar step = Math.floor(ctx.frame / 5);\\nvar pos = step % (len * 2);\\nvar headX = pos < len ? pos : len * 2 - pos - 1;\\nvar headY = pos < len ? 0 : (Math.floor(step / (len*2)) % 3);\\nvar foodX = (step * 7 + 13) % len;\\nvar foodY = (step * 3 + 7) % 3;\\nfor (var i = 0; i < ctx.lights.length; i++) {\\n  var L = ctx.lights[i];\\n  var trail = headX - L.cx;\\n  if (pos >= len) trail = L.cx - headX;\\n  if (L.y === headY && trail >= 0 && trail < snakeLen) {\\n    var bright = 1 - trail / snakeLen * 0.6;\\n    out[L.id] = {r: Math.round(snakeColor.r*bright), g: Math.round(snakeColor.g*bright), b: Math.round(snakeColor.b*bright), w: 0};\\n  } else if (L.cx === foodX && L.y === foodY) {\\n    out[L.id] = foodColor;\\n  }\\n}\\nreturn out;"
 `;
+}
+
+function getLightLayoutContext(considerDefective: boolean): string {
+  const { walls, lights } = getLayoutData();
+  return `${getLayoutBasicsContext(walls, lights, considerDefective)}
+MOTION DESIGN FORMAT:
+All motion designs use effect: "ai" with custom JavaScript animation code.
+You write the animation logic — you can create ANYTHING: comets, waves, games, physics, text, patterns, etc.
+${getAICodeContext(walls, considerDefective)}`;
 }
 
 // Get existing designs for context
@@ -402,6 +505,8 @@ export interface GenerateOptions {
   description: string;
   baseDesignId?: string;  // Optional: design to use as a starting point/reference
   mode?: 'create' | 'modify' | 'derivative';  // How to handle the base design
+  // Design around dead channels (default); false treats every channel as working
+  considerDefective?: boolean;
   currentDesignData?: {  // Optional: current in-editor design data (for editing unsaved designs)
     type: string;
     effect?: string;
@@ -425,9 +530,9 @@ export async function generateDesignFromDescription(
     ? { description: descriptionOrOptions }
     : descriptionOrOptions;
 
-  const { description, baseDesignId, mode = 'create', currentDesignData } = options;
+  const { description, baseDesignId, mode = 'create', currentDesignData, considerDefective = true } = options;
 
-  const layoutContext = getLightLayoutContext();
+  const layoutContext = getLightLayoutContext(considerDefective);
   const { walls: layoutWalls } = getLayoutData();
   const layoutRows = maxRows(layoutWalls);
   const existingDesignsContext = getExistingDesignsContext();
@@ -543,41 +648,12 @@ ${baseDesignId ? `Remember: You are ${mode === 'modify' ? 'modifying' : 'creatin
       ? `${mode === 'modify' ? 'Modify' : 'Create a variation of'} the design "${baseDesignId}": ${description}`
       : `Create a light design for: "${description}"`;
 
-    const model = modelId();
-    const useFallbacks = SERVER_FALLBACK_MODELS.has(model);
-
-    // Streaming + finalMessage(): generous max_tokens without HTTP timeouts.
-    // output_config.format constrains the reply to DESIGN_OUTPUT_SCHEMA.
-    const response = await client().beta.messages.stream({
-      model,
-      max_tokens: 32000,
+    const rawData = normalizeModelOutput(await requestStructuredJSON({
       system: systemPrompt,
-      messages: [{ role: 'user', content: userMessage }],
-      output_config: {
-        format: { type: 'json_schema', schema: DESIGN_OUTPUT_SCHEMA as unknown as Record<string, unknown> },
-      },
-      ...(useFallbacks
-        ? { betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' as const }
-        : {}),
-    }).finalMessage();
-
-    if (response.stop_reason === 'refusal') {
-      throw new Error('The AI declined to generate this design. Try rephrasing the request.');
-    }
-    if (response.stop_reason === 'max_tokens') {
-      throw new Error('AI response was cut off (too long). Try a simpler request.');
-    }
-
-    // Extract text content from response
-    const text = response.content
-      .filter((c): c is Extract<typeof c, { type: 'text' }> => c.type === 'text')
-      .map(c => c.text)
-      .join('');
-    if (!text.trim()) {
-      throw new Error('No text response from AI');
-    }
-
-    const rawData = normalizeModelOutput(parseModelJSON(text));
+      user: userMessage,
+      schema: DESIGN_OUTPUT_SCHEMA,
+      subject: 'design',
+    }));
 
     let designData: GeneratedDesign;
     const { walls, lights } = getLayoutData();
@@ -590,44 +666,10 @@ ${baseDesignId ? `Remember: You are ${mode === 'modify' ? 'modifying' : 'creatin
         throw new Error('Static design must have a "walls" object with per-wall color grids');
       }
 
-      // Clamp helper
-      const clamp = (c: RGBWColor): RGBWColor => ({
-        r: Math.max(0, Math.min(255, Math.round(c.r || 0))),
-        g: Math.max(0, Math.min(255, Math.round(c.g || 0))),
-        b: Math.max(0, Math.min(255, Math.round(c.b || 0))),
-        w: Math.max(0, Math.min(255, Math.round(c.w || 0))),
-      });
-
-      // Validate and clamp wall grids
-      for (const wall of walls) {
-        const grid = wallGrids[wall.name];
-        if (!grid || !Array.isArray(grid)) {
-          // Fill missing wall with black
-          wallGrids[wall.name] = Array.from({ length: wall.height }, () =>
-            Array.from({ length: wall.width }, () => ({ r: 0, g: 0, b: 0, w: 0 }))
-          );
-          continue;
-        }
-        for (let y = 0; y < wall.height; y++) {
-          if (!Array.isArray(grid[y])) {
-            grid[y] = Array.from({ length: wall.width }, () => ({ r: 0, g: 0, b: 0, w: 0 }));
-          }
-          // Pad/trim row to correct width
-          while (grid[y].length < wall.width) {
-            grid[y].push(grid[y][grid[y].length - 1] || { r: 0, g: 0, b: 0, w: 0 });
-          }
-          grid[y] = grid[y].slice(0, wall.width).map(clamp);
-        }
-      }
-
-      // Convert to a color map keyed by light_id (covers every configured light,
-      // whatever its id)
-      const colorMap = wallGridToColorMap(wallGrids, walls, lights);
-
       designData = {
         type: 'static',
         name: (rawData.name as string) || 'AI Design',
-        colors: colorMap,
+        colors: wallGridsToColorMap(wallGrids, walls, lights),
       };
     } else if (rawData.type === 'motion') {
       designData = rawData as unknown as MotionDesign;
