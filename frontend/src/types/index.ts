@@ -38,7 +38,9 @@ export interface Design {
   id: string;
   name: string;
   type: 'static' | 'motion';
-  data: StaticDesignData | MotionDesignData;
+  // null when the stored row is corrupt (the backend then sets dataError)
+  data: StaticDesignData | MotionDesignData | null;
+  dataError?: string;
   created_at?: string;
   updated_at?: string;
 }

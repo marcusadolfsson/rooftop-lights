@@ -1,11 +1,23 @@
 import { NavLink, useLocation } from 'react-router-dom';
-import { useWebSocket } from './hooks/useWebSocket';
+import { useConnectionStatus } from './hooks/useLightSocket';
 import LayoutPage from './pages/LayoutPage';
 import DesignPage from './pages/DesignPage';
 import SchedulerPage from './pages/SchedulerPage';
 
+// Own component so status updates (dmxRate) don't re-render the pages
+function ConnectionIndicator() {
+  const { connected, dmxRate } = useConnectionStatus();
+  return (
+    <div className="status-indicator">
+      <span
+        className={`status-dot ${connected ? 'connected' : 'disconnected'}`}
+      />
+      <span>{connected ? `DMX ${dmxRate} pkt/s` : 'Disconnected'}</span>
+    </div>
+  );
+}
+
 function App() {
-  const { connected, dmxRate } = useWebSocket();
   const location = useLocation();
 
   return (
@@ -34,12 +46,7 @@ function App() {
             </NavLink>
           </div>
           <div className="nav-status">
-            <div className="status-indicator">
-              <span
-                className={`status-dot ${connected ? 'connected' : 'disconnected'}`}
-              />
-              <span>{connected ? `DMX ${dmxRate} pkt/s` : 'Disconnected'}</span>
-            </div>
+            <ConnectionIndicator />
           </div>
         </div>
       </nav>

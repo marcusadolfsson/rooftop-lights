@@ -253,7 +253,8 @@ export const aiAPI = {
       design?: {
         type: 'static' | 'motion';
         name: string;
-        colors?: { r: number; g: number; b: number; w: number }[];
+        // Static: array indexed by light_id - 1, or a map keyed by light_id. Motion: palette array.
+        colors?: RGBW[] | Record<number, RGBW>;
         effect?: string;
         speed?: number;
         scope?: string;
@@ -304,4 +305,14 @@ export const previewAPI = {
       method: 'POST',
       body: JSON.stringify(data),
     }),
+};
+
+// Health (served outside /api). timeZone is optional: newer backends report the
+// zone schedules are evaluated in.
+export const healthAPI = {
+  get: async (): Promise<{ status: string; version?: string; uptime?: string; timeZone?: string }> => {
+    const response = await fetch('/health');
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    return response.json();
+  },
 };

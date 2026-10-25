@@ -24,9 +24,9 @@ function LayoutPage() {
     }
   }, [isVisible]);
 
+  // Only the first load shows the loading screen; later refreshes happen in the background
   const loadData = async () => {
     try {
-      setLoading(true);
       const [layoutData, artnetData] = await Promise.all([
         layoutAPI.getLayout(),
         artnetAPI.getConfig(),
@@ -283,6 +283,15 @@ function LayoutPage() {
                 className={`light-cell ${selectedLight?.id === light.id ? 'selected' : ''}`}
                 style={{ backgroundColor: rgbwToStyle(light), position: 'relative' }}
                 onClick={() => handleLightClick(light)}
+                role="button"
+                tabIndex={0}
+                aria-label={`Edit light ${light.light_id}${light.defective_channels ? ' (defective)' : ''}`}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    handleLightClick(light);
+                  }
+                }}
                 title={`Light #${light.light_id}\nDMX: ${light.dmx_start_channel}-${light.dmx_start_channel + (light.light_type === 'RGBW' ? 3 : 2)}${light.defective_channels ? `\nDefective: ${light.defective_channels.toUpperCase()}` : ''}`}
               >
                 {light.light_id}

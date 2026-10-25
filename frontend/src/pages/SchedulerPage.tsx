@@ -1,11 +1,20 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useLocation } from 'react-router-dom';
-import { designsAPI, playlistsAPI, schedulesAPI, layoutAPI, previewAPI } from '../utils/api';
-import { useWebSocket } from '../hooks/useWebSocket';
-import type { Design, Playlist, Schedule, LayoutData, RGBW } from '../types';
+import { designsAPI, playlistsAPI, schedulesAPI, layoutAPI, previewAPI, healthAPI } from '../utils/api';
+import LiveLightPreview from '../components/LiveLightPreview';
+import type { Design, Playlist, Schedule, LayoutData } from '../types';
+
+const ACTIVE_POLL_MS = 30000;
+
+// Parse "YYYY-MM-DD" as a local calendar date. new Date("YYYY-MM-DD") is UTC
+// midnight, which displays as the previous day in time zones west of UTC.
+function parseLocalDate(dateStr: string): Date | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(dateStr);
+  if (!m) return null;
+  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+}
 
 function SchedulerPage() {
-  const { frameData } = useWebSocket();
   const location = useLocation();
   const isVisible = location.pathname === '/schedule';
   const [layout, setLayout] = useState<LayoutData | null>(null);
@@ -33,6 +42,7 @@ function SchedulerPage() {
   const [startTime, setStartTime] = useState('16:00');
   const [endTime, setEndTime] = useState('16:00');
   const [priority, setPriority] = useState(0);
+  const [serverTimeZone, setServerTimeZone] = useState<string | null>(null);
 
   // Load/refresh data when page becomes visible
   useEffect(() => {
@@ -41,9 +51,37 @@ function SchedulerPage() {
     }
   }, [isVisible]);
 
+  // Server time zone (schedule times are evaluated in it), if the backend reports one
+  useEffect(() => {
+    healthAPI.get()
+      .then((h) => { if (typeof h.timeZone === 'string' && h.timeZone) setServerTimeZone(h.timeZone); })
+      .catch(() => { /* optional; fall back to the generic hint */ });
+  }, []);
+
+  // Keep "Currently Active" fresh while the page is visible
+  const refreshActive = useCallback(async () => {
+    try {
+      const [activeData, previewStatus] = await Promise.all([
+        schedulesAPI.getActive(),
+        previewAPI.getStatus(),
+      ]);
+      setActiveSchedule(activeData);
+      setLivePreviewActive(previewStatus.isLivePreview);
+      setLivePreviewInfo(previewStatus.livePreviewInfo);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to refresh active schedule');
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!isVisible) return;
+    const id = window.setInterval(refreshActive, ACTIVE_POLL_MS);
+    return () => clearInterval(id);
+  }, [isVisible, refreshActive]);
+
+  // Only the first load shows the loading screen; later refreshes happen in the background
   const loadData = async () => {
     try {
-      setLoading(true);
       const [layoutData, designsData, playlistsData, schedulesData, defaultData, activeData, previewStatus] = await Promise.all([
         layoutAPI.getLayout(),
         designsAPI.getAll(),
@@ -167,7 +205,8 @@ function SchedulerPage() {
 
   const formatDate = (dateStr: string | null, timeStr?: string | null): string => {
     if (!dateStr) return 'N/A';
-    const date = new Date(dateStr).toLocaleDateString();
+    const parsed = parseLocalDate(dateStr);
+    const date = parsed ? parsed.toLocaleDateString() : dateStr;
     if (timeStr) return `${date} ${timeStr}`;
     return date;
   };
@@ -179,14 +218,7 @@ function SchedulerPage() {
     return schedule.design_name || 'Unknown Design';
   };
 
-  const getLightColor = (lightId: number): string => {
-    const color: RGBW | undefined = frameData[lightId];
-    if (!color) return '#222';
-    const r = Math.min(255, color.r + color.w);
-    const g = Math.min(255, color.g + color.w);
-    const b = Math.min(255, color.b + color.w);
-    return `rgb(${r}, ${g}, ${b})`;
-  };
+  const timeZoneHint = serverTimeZone ? `server time, ${serverTimeZone}` : 'server local time';
 
   if (loading) {
     return <div className="page-header"><h1>Loading...</h1></div>;
@@ -195,60 +227,14 @@ function SchedulerPage() {
   return (
     <div>
       {/* ArtNet Output Preview */}
-      {layout && (() => {
-        const maxRows = Math.max(...layout.walls.map(w => w.height));
-        return (
-          <div className="preview-strip">
-            <div className="preview-strip-header">
-              <div className="preview-strip-title">ArtNet Output</div>
-            </div>
-            <div className="preview-strip-grid-wrapper">
-              <div
-                className="preview-strip-grid"
-                style={{ gridTemplateColumns: layout.walls.map(w => `repeat(${w.width}, 1fr)`).join(' 6px ') }}
-              >
-                {Array.from({ length: maxRows }, (_, rowIdx) => {
-                  const y = maxRows - 1 - rowIdx;
-                  return layout.walls.flatMap((wall, wallIdx) => {
-                    const cells = Array.from({ length: wall.width }, (_, x) => {
-                      const light = wall.matrix?.[y]?.[x];
-                      if (!light || y >= wall.height) {
-                        return (
-                          <div
-                            key={`${wall.id}-${y}-${x}`}
-                            className="preview-strip-cell"
-                            style={{ backgroundColor: '#111' }}
-                          />
-                        );
-                      }
-                      return (
-                        <div
-                          key={light.id}
-                          className="preview-strip-cell"
-                          style={{ backgroundColor: getLightColor(light.light_id) }}
-                          title={`#${light.light_id} (${wall.name})`}
-                        />
-                      );
-                    });
-                    if (wallIdx < layout.walls.length - 1) {
-                      cells.push(<div key={`spacer-${wall.id}-${y}`} className="preview-strip-spacer" />);
-                    }
-                    return cells;
-                  });
-                })}
-              </div>
-              <div
-                className="preview-strip-labels"
-                style={{ gridTemplateColumns: layout.walls.map(w => `${w.width}fr`).join(' 6px ') }}
-              >
-                {layout.walls.map((wall, wallIdx) => (
-                  <>{wallIdx > 0 && <div key={`spacer-label-${wall.id}`} />}<div key={wall.id} className="preview-strip-label">{wall.name}</div></>
-                ))}
-              </div>
-            </div>
+      {layout && (
+        <div className="preview-strip">
+          <div className="preview-strip-header">
+            <div className="preview-strip-title">ArtNet Output</div>
           </div>
-        );
-      })()}
+          <LiveLightPreview walls={layout.walls} active={isVisible} />
+        </div>
+      )}
 
       <div className="page-header">
         <h1 className="page-title">Schedule</h1>
@@ -580,8 +566,9 @@ function SchedulerPage() {
               </div>
 
               <div className="form-group">
-                <label className="form-label">Start Time</label>
+                <label className="form-label" htmlFor="schedule-start-time">Start Time <span style={{ fontWeight: 400, color: 'var(--text-secondary)' }}>({timeZoneHint})</span></label>
                 <input
+                  id="schedule-start-time"
                   type="time"
                   className="form-input"
                   value={startTime}
@@ -600,8 +587,9 @@ function SchedulerPage() {
               </div>
 
               <div className="form-group">
-                <label className="form-label">End Time</label>
+                <label className="form-label" htmlFor="schedule-end-time">End Time <span style={{ fontWeight: 400, color: 'var(--text-secondary)' }}>({timeZoneHint})</span></label>
                 <input
+                  id="schedule-end-time"
                   type="time"
                   className="form-input"
                   value={endTime}

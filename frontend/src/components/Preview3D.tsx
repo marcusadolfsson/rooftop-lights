@@ -19,6 +19,11 @@ const LIGHT_SIZE = 0.7;
 const LIGHT_DEPTH = 0.1;
 const PANEL_PADDING = 0.3;
 
+// Shared by every light box. Created once at module level so re-renders
+// (one per WebSocket frame) never allocate new GPU buffers.
+const LIGHT_BOX_GEOMETRY = new THREE.BoxGeometry(LIGHT_SIZE, LIGHT_SIZE, LIGHT_DEPTH);
+const LIGHT_EDGES_GEOMETRY = new THREE.EdgesGeometry(LIGHT_BOX_GEOMETRY);
+
 // Rotation for each wall so it faces outward
 const WALL_ROTATION: Record<string, number> = {
   West:  -Math.PI / 2,
@@ -81,10 +86,6 @@ function WallGroup({ wall, position, getLightColor, getDefectiveSimulation, show
   inside?: boolean;
 }) {
   const rotationY = WALL_ROTATION[wall.name];
-  if (rotationY === undefined) return null;
-
-  const pw = panelWidth(wall.width);
-  const panelHeight = wall.height * LIGHT_SPACING + PANEL_PADDING;
 
   // Collect all lights from the matrix
   const lights = useMemo(() => {
@@ -108,6 +109,11 @@ function WallGroup({ wall, position, getLightColor, getDefectiveSimulation, show
     return result;
   }, [wall]);
 
+  if (rotationY === undefined) return null;
+
+  const pw = panelWidth(wall.width);
+  const panelHeight = wall.height * LIGHT_SPACING + PANEL_PADDING;
+
   return (
     <group position={position} rotation={[0, rotationY, 0]}>
       {/* Back panel */}
@@ -121,8 +127,7 @@ function WallGroup({ wall, position, getLightColor, getDefectiveSimulation, show
         if (showIds) {
           return (
             <group key={lightId} position={[localX, localY, 0]}>
-              <mesh>
-                <boxGeometry args={[LIGHT_SIZE, LIGHT_SIZE, LIGHT_DEPTH]} />
+              <mesh geometry={LIGHT_BOX_GEOMETRY}>
                 <meshStandardMaterial color="#475569" emissive="#334155" emissiveIntensity={0.8} />
               </mesh>
               <Text
@@ -147,8 +152,7 @@ function WallGroup({ wall, position, getLightColor, getDefectiveSimulation, show
 
         return (
           <group key={lightId} position={[localX, localY, 0]}>
-            <mesh>
-              <boxGeometry args={[LIGHT_SIZE, LIGHT_SIZE, LIGHT_DEPTH]} />
+            <mesh geometry={LIGHT_BOX_GEOMETRY}>
               <meshStandardMaterial
                 color={isDark ? '#333' : colorStr}
                 emissive={colorStr}
@@ -156,8 +160,7 @@ function WallGroup({ wall, position, getLightColor, getDefectiveSimulation, show
               />
             </mesh>
             {isDefective && (
-              <lineSegments>
-                <edgesGeometry args={[new THREE.BoxGeometry(LIGHT_SIZE, LIGHT_SIZE, LIGHT_DEPTH)]} />
+              <lineSegments geometry={LIGHT_EDGES_GEOMETRY}>
                 <lineBasicMaterial color="#ff4444" linewidth={2} />
               </lineSegments>
             )}
