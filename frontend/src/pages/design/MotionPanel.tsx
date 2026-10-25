@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 import type { Design, EffectType, RGBW, Wall } from '../../types';
 import { rgbwToCss } from '../../utils/color';
 import ColorPicker from './ColorPicker';
@@ -131,62 +131,65 @@ export default function MotionPanel({
                   </div>
                 </div>
               )}
-              <div className="form-group" style={{ marginBottom: 0, minWidth: '120px' }}>
-                <label className="form-label" htmlFor="motion-speed">Speed: {speed.toFixed(1)}x</label>
-                <input id="motion-speed" type="range" className="form-input" min={0.1} max={2} step={0.1} value={speed} onChange={(e) => editor.setSpeed(parseFloat(e.target.value))} style={{ padding: 0 }} />
+              <div className="form-group" style={{ marginBottom: 0, minWidth: '160px' }}>
+                <div className="fx-param-head">
+                  <label className="form-label" htmlFor="motion-speed" style={{ marginBottom: 0 }}>Speed</label>
+                  <span className="fx-value">{speed.toFixed(1)}×</span>
+                </div>
+                <Slider id="motion-speed" min={0.1} max={2} step={0.1} value={speed} onChange={editor.setSpeed} />
               </div>
               <div className="form-group" style={{ marginBottom: 0 }}>
                 <span className="form-label">Scope</span>
-                <div className="preview-mode-toggle" role="group" aria-label="Scope">
+                <div className="preview-mode-toggle" role="group" aria-label="Scope" style={{ width: 'fit-content' }}>
                   {SCOPES.map((s) => (
                     <button key={s.value} className={scope === s.value ? 'active' : ''} aria-pressed={scope === s.value} onClick={() => editor.setScope(s.value)}>{s.label}</button>
                   ))}
                 </div>
+                {scope === 'wall' && walls.length > 0 && (
+                  <WallChecklist walls={walls} wallIds={params.wallIds} onChange={(ids) => editor.setParam('wallIds', ids)} />
+                )}
               </div>
-              {scope === 'wall' && walls.length > 0 && (() => {
-                // params.wallIds limits Per Wall to some walls; empty/missing means all of them
-                const chosen = Array.isArray(params.wallIds) ? (params.wallIds as string[]) : [];
-                const isOn = (id: string) => chosen.length === 0 || chosen.includes(id);
-                const toggle = (id: string) => {
-                  const current = walls.filter((w) => isOn(w.id)).map((w) => w.id);
-                  const next = isOn(id) ? current.filter((x) => x !== id) : [...current, id];
-                  if (next.length === 0) return; // keep at least one wall lit
-                  editor.setParam('wallIds', next.length === walls.length ? [] : next);
-                };
-                return (
-                  <div className="form-group" style={{ marginBottom: 0 }}>
-                    <span className="form-label">Walls</span>
-                    <div className="preview-mode-toggle" role="group" aria-label="Walls">
-                      {walls.map((w) => (
-                        <button key={w.id} className={isOn(w.id) ? 'active' : ''} aria-pressed={isOn(w.id)} onClick={() => toggle(w.id)}>{w.name}</button>
-                      ))}
-                    </div>
-                  </div>
-                );
-              })()}
             </div>
             {Object.entries(effect.params).length > 0 && (
-              <div className="form-group">
+              <div className="form-group" style={{ marginTop: '1.25rem' }}>
                 <span className="form-label">Parameters</span>
-                <div className="form-row">
+                <div className="fx-params">
                   {Object.entries(effect.params).map(([key, param]) => {
                     const inputId = `motion-param-${key}`;
+                    const label = param.label || humanize(key);
+                    if (param.type === 'boolean') {
+                      const on = !!params[key];
+                      return (
+                        <div key={key} className="fx-param fx-param-row">
+                          <span className="fx-param-label" id={`${inputId}-label`}>{label}</span>
+                          <button
+                            type="button"
+                            id={inputId}
+                            role="switch"
+                            aria-checked={on}
+                            aria-labelledby={`${inputId}-label`}
+                            className={`toggle-switch toggle-switch-sm ${on ? 'active' : ''}`}
+                            onClick={() => editor.setParam(key, !on)}
+                          />
+                        </div>
+                      );
+                    }
+                    if (param.type === 'string') {
+                      return (
+                        <div key={key} className="fx-param">
+                          <label className="fx-param-label" htmlFor={inputId}>{label}</label>
+                          <input id={inputId} type="text" className="form-input" value={(params[key] as string) || ''} onChange={(e) => editor.setParam(key, e.target.value)} />
+                        </div>
+                      );
+                    }
+                    const value = Number(params[key] ?? param.default);
                     return (
-                      <div key={key} className="form-group">
-                        <label className="form-label" htmlFor={inputId}>{param.label || key}</label>
-                        {param.type === 'number' ? (
-                          <>
-                            <input id={inputId} type="range" className="form-input" min={param.min} max={param.max} step={param.step || 1} value={params[key] as number} onChange={(e) => editor.setParam(key, parseFloat(e.target.value))} />
-                            <span style={{ marginLeft: '0.5rem' }}>{params[key]?.toString()}</span>
-                          </>
-                        ) : param.type === 'string' ? (
-                          <input id={inputId} type="text" className="form-input" style={{ maxWidth: '200px' }} value={(params[key] as string) || ''} onChange={(e) => editor.setParam(key, e.target.value)} />
-                        ) : (
-                          <>
-                            <input id={inputId} type="checkbox" checked={params[key] as boolean} onChange={(e) => editor.setParam(key, e.target.checked)} />
-                            <span style={{ marginLeft: '0.5rem' }}>{params[key]?.toString()}</span>
-                          </>
-                        )}
+                      <div key={key} className="fx-param">
+                        <div className="fx-param-head">
+                          <label className="fx-param-label" htmlFor={inputId}>{label}</label>
+                          <span className="fx-value">{formatNumber(value)}{param.unit || ''}</span>
+                        </div>
+                        <Slider id={inputId} min={param.min ?? 0} max={param.max ?? 100} step={param.step || 1} value={value} onChange={(v) => editor.setParam(key, v)} />
                       </div>
                     );
                   })}
@@ -201,6 +204,56 @@ export default function MotionPanel({
       <div className="color-picker-column">
         {effect && <ColorPicker color={currentColor} onChange={handleColorChange} hasRGBW={hasRGBW} />}
       </div>
+    </div>
+  );
+}
+
+// "tailLength" -> "Tail length", "width1" -> "Width 1"
+function humanize(key: string): string {
+  const words = key.replace(/([a-z])([A-Z0-9])/g, '$1 $2').toLowerCase();
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+function formatNumber(v: number): string {
+  return Number.isInteger(v) ? String(v) : v.toFixed(2).replace(/0+$/, '').replace(/\.$/, '');
+}
+
+// Range input whose filled part tracks the value (styled in index.css as .fx-slider)
+function Slider({ id, min, max, step, value, onChange }: { id: string; min: number; max: number; step: number; value: number; onChange: (v: number) => void }) {
+  const pct = max > min ? ((value - min) / (max - min)) * 100 : 0;
+  return (
+    <input
+      id={id}
+      type="range"
+      className="fx-slider"
+      min={min}
+      max={max}
+      step={step}
+      value={value}
+      style={{ '--fill': `${Math.max(0, Math.min(100, pct))}%` } as CSSProperties}
+      onChange={(e) => onChange(parseFloat(e.target.value))}
+    />
+  );
+}
+
+// Per Wall wall selection; an empty list means every wall
+function WallChecklist({ walls, wallIds, onChange }: { walls: Wall[]; wallIds: unknown; onChange: (ids: string[]) => void }) {
+  const chosen = Array.isArray(wallIds) ? (wallIds as string[]) : [];
+  const isOn = (id: string) => chosen.length === 0 || chosen.includes(id);
+  const toggle = (id: string) => {
+    const current = walls.filter((w) => isOn(w.id)).map((w) => w.id);
+    const next = isOn(id) ? current.filter((x) => x !== id) : [...current, id];
+    if (next.length === 0) return; // keep at least one wall lit
+    onChange(next.length === walls.length ? [] : next);
+  };
+  return (
+    <div className="fx-checklist" role="group" aria-label="Walls">
+      {walls.map((w) => (
+        <button key={w.id} type="button" role="checkbox" aria-checked={isOn(w.id)} className={`fx-check ${isOn(w.id) ? 'checked' : ''}`} onClick={() => toggle(w.id)}>
+          <span className="fx-check-box" aria-hidden="true" />
+          {w.name}
+        </button>
+      ))}
     </div>
   );
 }

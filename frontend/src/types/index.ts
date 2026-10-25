@@ -74,6 +74,7 @@ export interface EffectParam {
   max?: number;
   step?: number;
   label?: string;
+  unit?: string;
 }
 
 export interface Playlist {
