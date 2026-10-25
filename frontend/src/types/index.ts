@@ -71,6 +71,8 @@ export interface EffectType {
   // Stepped effects move one light every stepFrames frames at 1x; realTime effects ignore Speed
   stepFrames?: number;
   realTime?: boolean;
+  // Speed a new design of this effect starts at (1 when absent)
+  defaultSpeed?: number;
 }
 
 export interface EffectParam {

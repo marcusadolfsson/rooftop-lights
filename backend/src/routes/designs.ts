@@ -5,6 +5,7 @@ import { generateDesignFromDescription } from '../services/aiDesigner.js';
 import { validateDesign, safeParseJSON } from '../services/designValidation.js';
 import { invalidateSchedule } from '../scheduler/scheduler.js';
 import { STEP_FRAMES } from '../services/effectEngine.js';
+import { applyLayoutDefaults } from '../services/layoutDefaults.js';
 
 const router = Router();
 
@@ -483,7 +484,7 @@ router.get('/effects/types', (req: Request, res: Response) => {
     strobe: { realTime: true },
   };
 
-  res.json(effectTypes.map(fx => ({ ...fx, ...colorInfo[fx.type], ...motionInfo[fx.type] })));
+  res.json(applyLayoutDefaults(effectTypes as any[]).map(fx => ({ ...fx, ...colorInfo[fx.type], ...motionInfo[fx.type] })));
 });
 
 export default router;

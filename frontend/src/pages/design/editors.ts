@@ -239,7 +239,7 @@ export function useMotionEditor({ preview, reload, setError, autoPreview, effect
 
   const selectEffect = (fx: EffectType) => {
     setSelectedDesign(null);
-    return replace({ effect: fx, colors: [...fx.defaultColors], speed: 1, scope: 'all', params: effectDefaults(fx) }, true);
+    return replace({ effect: fx, colors: [...fx.defaultColors], speed: fx.defaultSpeed ?? 1, scope: 'all', params: effectDefaults(fx) }, true);
   };
 
   // Fills in params and colors added to the effect after the design was saved, so the controls match what renders
