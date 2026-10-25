@@ -456,7 +456,8 @@ export class Scheduler {
       // Same normalized/clamped speed the engine renders with, so frame scaling and the engine's
       // seconds-based timing agree (e.g. a stored speed below the 0.01 minimum)
       const speed = normalizeMotionEffect(motionData).speed;
-      const scaledFrame = Math.floor(frame * speed);
+      // Kept fractional so sub-pixel blending can move between steps; the engine floors it otherwise
+      const scaledFrame = frame * speed;
       return engine.generateMotionFrame(motionData, scaledFrame, frame);
     }
 

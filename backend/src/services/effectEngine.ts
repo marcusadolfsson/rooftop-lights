@@ -204,6 +204,18 @@ function chaseAsComet(effect: MotionEffect): MotionEffect {
   };
 }
 
+/**
+ * Stepped effects move one light every this many (speed-scaled) frames. Used for optional sub-pixel
+ * blending, and reported to the editor so it can say how smooth a speed looks.
+ */
+export const STEP_FRAMES: Record<string, number> = {
+  candy_cane: 15,
+  checkerboard: 15,
+  comet: 4,
+  converge: 4,
+  text: 6,
+};
+
 /** Wall ids a Per Wall effect is limited to (empty = all walls). */
 function selectedWallIds(effect: MotionEffect): string[] {
   const ids = effect.params?.wallIds;
@@ -377,7 +389,20 @@ export class EffectEngine {
   generateMotionFrame(rawEffect: MotionEffect, frameNum: number, realFrame?: number): Map<number, RGBW> {
     const effect = normalizeMotionEffect(rawEffect);
     const real = typeof realFrame === 'number' && Number.isFinite(realFrame) ? realFrame : realFrameOf(effect, frameNum);
-    const frame = this.renderMotion(effect, frameNum, real);
+    const stepFrames = STEP_FRAMES[effect.type];
+    let frame: Map<number, RGBW>;
+    if (stepFrames && bool(effect.params?.smooth, false)) {
+      // Sub-pixel blending: render the step before and after this moment and crossfade between
+      // them, so a moving edge glides across two lights instead of jumping a whole light
+      const a = Math.floor(frameNum / stepFrames) * stepFrames;
+      const t = (frameNum - a) / stepFrames;
+      const from = this.renderMotion(effect, a, real);
+      const to = this.renderMotion(effect, a + stepFrames, real);
+      frame = new Map();
+      for (const [id, c] of from) frame.set(id, mixColor(c, to.get(id) ?? BLACK, t));
+    } else {
+      frame = this.renderMotion(effect, Math.floor(frameNum), real);
+    }
 
     // Per Wall can be limited to chosen walls; everything else stays dark
     // Ignore ids of walls that no longer exist, so a deleted wall can't black out the whole roof

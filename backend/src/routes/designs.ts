@@ -4,6 +4,7 @@ import { randomUUID as uuidv4 } from 'crypto';
 import { generateDesignFromDescription } from '../services/aiDesigner.js';
 import { validateDesign, safeParseJSON } from '../services/designValidation.js';
 import { invalidateSchedule } from '../scheduler/scheduler.js';
+import { STEP_FRAMES } from '../services/effectEngine.js';
 
 const router = Router();
 
@@ -264,6 +265,7 @@ router.get('/effects/types', (req: Request, res: Response) => {
         { r: 0, g: 0, b: 0, w: 255 },
       ],
       params: {
+        smooth: { type: 'boolean', default: false, label: 'Sub-pixel blending' },
         width1: { type: 'number', default: 4, min: 1, max: 16, label: 'Stripe 1 width' },
         width2: { type: 'number', default: 4, min: 1, max: 16, label: 'Stripe 2 width' },
         angle: { type: 'number', default: -63, min: -75, max: 75, step: 1, label: 'Stripe angle', unit: '°' },
@@ -277,7 +279,9 @@ router.get('/effects/types', (req: Request, res: Response) => {
         { r: 0, g: 0, b: 0, w: 255 },
         { r: 0, g: 0, b: 0, w: 0 },
       ],
-      params: {},
+      params: {
+        smooth: { type: 'boolean', default: false, label: 'Sub-pixel blending' },
+      },
     },
     {
       type: 'comet',
@@ -288,6 +292,7 @@ router.get('/effects/types', (req: Request, res: Response) => {
         { r: 0, g: 0, b: 200, w: 0 },
       ],
       params: {
+        smooth: { type: 'boolean', default: false, label: 'Sub-pixel blending' },
         size: { type: 'number', default: 1, min: 1, max: 10, label: 'Size' },
         tailLength: { type: 'number', default: 8, min: 0, max: 20, label: 'Tail length' },
         reverse: { type: 'boolean', default: false },
@@ -342,6 +347,7 @@ router.get('/effects/types', (req: Request, res: Response) => {
         { r: 0, g: 0, b: 0, w: 255 },
       ],
       params: {
+        smooth: { type: 'boolean', default: false, label: 'Sub-pixel blending' },
         groupSize: { type: 'number', default: 3, min: 1, max: 10, label: 'Size' },
         tail: { type: 'number', default: 0, min: 0, max: 10, label: 'Comet tail' },
         bounce: { type: 'boolean', default: false, label: 'Move back out after meeting' },
@@ -366,6 +372,7 @@ router.get('/effects/types', (req: Request, res: Response) => {
       description: 'Scrolling text rendered with a pixel font',
       defaultColors: [{ r: 0, g: 0, b: 0, w: 255 }],
       params: {
+        smooth: { type: 'boolean', default: false, label: 'Sub-pixel blending' },
         text: { type: 'string', default: 'HELLO' },
         pause: { type: 'number', default: 0, min: 0, max: 30, step: 0.5, label: 'Pause before looping', unit: ' s' },
       },
@@ -468,11 +475,7 @@ router.get('/effects/types', (req: Request, res: Response) => {
   // How Speed relates to motion. Stepped effects move one light every `stepFrames` frames at 1x
   // (the render loop runs at 30 FPS); real-time effects set their timing in seconds and ignore Speed.
   const motionInfo: Record<string, { stepFrames?: number; realTime?: boolean }> = {
-    candy_cane: { stepFrames: 15 },
-    checkerboard: { stepFrames: 15 },
-    comet: { stepFrames: 4 },
-    converge: { stepFrames: 4 },
-    text: { stepFrames: 6 },
+    ...Object.fromEntries(Object.entries(STEP_FRAMES).map(([type, stepFrames]) => [type, { stepFrames }])),
     twinkle: { realTime: true },
     fade: { realTime: true },
     lightning: { realTime: true },

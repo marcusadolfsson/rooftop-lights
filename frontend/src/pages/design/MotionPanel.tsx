@@ -178,7 +178,7 @@ export default function MotionPanel({
                     <span className="fx-value">{clamp(speed, SPEED_MIN, SPEED_MAX).toFixed(1)}×</span>
                   </div>
                   <Slider id="motion-speed" min={SPEED_MIN} max={SPEED_MAX} step={0.1} value={speed} onChange={editor.setSpeed} />
-                  <SpeedNote stepFrames={effect.stepFrames} speed={clamp(speed, SPEED_MIN, SPEED_MAX)} />
+                  <SpeedNote stepFrames={effect.stepFrames} blended={params.smooth === true} speed={clamp(speed, SPEED_MIN, SPEED_MAX)} />
                 </div>
               )}
               <div className="form-group" style={{ marginBottom: 0 }}>
@@ -306,8 +306,11 @@ function Slider({ id, min, max, step, value, onChange }: { id: string; min: numb
 // when it steps often enough. Around 10 steps per second reads as motion rather than single jumps.
 const RENDER_FPS = 30;
 const SMOOTH_STEPS_PER_SECOND = 10;
-function SpeedNote({ stepFrames, speed }: { stepFrames?: number; speed: number }) {
+function SpeedNote({ stepFrames, blended, speed }: { stepFrames?: number; blended: boolean; speed: number }) {
   if (!stepFrames) return <p className="fx-speed-note">Smooth at any speed</p>;
+  if (blended) {
+    return <p className="fx-speed-note">{formatNumber(Math.round(((RENDER_FPS * speed) / stepFrames) * 10) / 10)} lights/s · smooth at any speed (blending on)</p>;
+  }
   const stepsPerSecond = (RENDER_FPS * speed) / stepFrames;
   const minSmooth = (SMOOTH_STEPS_PER_SECOND * stepFrames) / RENDER_FPS;
   const smooth = speed >= minSmooth - 1e-9;
