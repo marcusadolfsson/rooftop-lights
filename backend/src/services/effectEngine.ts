@@ -590,12 +590,23 @@ export class EffectEngine {
 
     for (let y = 0; y < 3; y++) {
       for (const row of this.getSegments(y, effect.scope)) {
-        const pos = cycleStep(step, row.length, pause);
-        if (pos === null) continue; // pausing after a full lap
-
-        for (let g = 0; g < Math.min(groupSize, row.length); g++) {
-          const idx = (pos + g) % row.length;
-          frame.set(row[idx].light_id, chaseColor);
+        const size = Math.min(groupSize, row.length);
+        if (pause === 0) {
+          // Continuous lap: the group wraps from the end straight back to the start
+          const pos = step % row.length;
+          for (let g = 0; g < size; g++) {
+            frame.set(row[(pos + g) % row.length].light_id, chaseColor);
+          }
+          continue;
+        }
+        // With a pause the group slides in from the start and fully off the end (no wrap-around),
+        // so nothing is lit at the beginning while the lap finishes
+        const local = cycleStep(step, row.length + size - 1, pause);
+        if (local === null) continue; // pausing after a full lap
+        const pos = local - (size - 1);
+        for (let g = 0; g < size; g++) {
+          const idx = pos + g;
+          if (idx >= 0 && idx < row.length) frame.set(row[idx].light_id, chaseColor);
         }
       }
     }
