@@ -78,6 +78,7 @@ export default function SavedList({ title, items, selectedId, onSelect, onRename
     return (
       <tr
         key={item.id}
+        className={`saved-row${selected ? ' selected' : ''}`}
         style={{ cursor: 'pointer', backgroundColor: selected ? 'var(--bg-tertiary)' : undefined, borderLeft: selected ? '3px solid var(--primary-color)' : '3px solid transparent' }}
         onClick={() => select(item.id)}
       >
@@ -103,6 +104,7 @@ export default function SavedList({ title, items, selectedId, onSelect, onRename
             <button
               type="button"
               className="saved-item-button"
+              title={item.name}
               aria-current={selected ? 'true' : undefined}
               onClick={(e) => { e.stopPropagation(); select(item.id); }}
             >
@@ -110,7 +112,7 @@ export default function SavedList({ title, items, selectedId, onSelect, onRename
             </button>
           )}
         </td>
-        <td style={{ width: '1px', whiteSpace: 'nowrap' }}>
+        <td className="saved-row-actions">
           {item.actions}
           <button className="btn-icon" style={{ padding: '0.2rem' }} title="Move to folder" aria-label={`Move ${item.name} to folder`} onClick={(e) => { e.stopPropagation(); setMovingId(item.id); }}>
             {MOVE_ICON}

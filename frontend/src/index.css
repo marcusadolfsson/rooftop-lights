@@ -2776,14 +2776,6 @@ body {
   table-layout: fixed;
 }
 
-.saved-designs-table tr:not(.folder-row) td:last-child:not(:first-child) {
-  width: 4.4rem;
-}
-
-.saved-designs-table .saved-item-button {
-  overflow-wrap: break-word;
-}
-
 .folder-row-inner {
   min-width: 0;
 }
@@ -2812,4 +2804,63 @@ body {
 
 .static-design-title {
   margin-bottom: 0.6rem;
+}
+
+/* Saved lists: one line per name (ellipsis, full name on hover), actions only on hover */
+.saved-row {
+  position: relative;
+}
+
+.saved-designs-table .saved-item-button {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.saved-designs-table .saved-row-actions {
+  width: 0;
+  padding: 0;
+  white-space: nowrap;
+}
+
+.saved-row-actions .btn-icon {
+  padding: 0.2rem;
+}
+
+.folder-row .folder-name {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+@media (hover: hover) {
+  /* Actions float over the end of the row, so names get the full width until you point at them */
+  .saved-designs-table .saved-row-actions {
+    position: absolute;
+    right: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    padding: 0 0.25rem 0 1.25rem;
+    background: linear-gradient(to right, transparent, var(--bg-tertiary) 1.1rem);
+    border: none;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.12s;
+  }
+
+  .saved-row:hover .saved-row-actions,
+  .saved-row:focus-within .saved-row-actions {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .folder-row .folder-actions {
+    opacity: 0;
+    transition: opacity 0.12s;
+  }
+
+  .folder-row:hover .folder-actions,
+  .folder-row:focus-within .folder-actions {
+    opacity: 1;
+  }
 }
