@@ -217,9 +217,25 @@ export default function MotionPanel({
                         </div>
                       );
                     }
-                    // Shown clamped to the slider's range so the value matches the thumb
                     const min = param.min ?? 0;
                     const max = param.max ?? 100;
+                    if (param.type === 'range') {
+                      // Older designs may hold a single number: treat it as a fixed value (lo = hi)
+                      const raw = params[key] ?? param.default;
+                      const pair = Array.isArray(raw) ? raw.map(Number) : [Number(raw), Number(raw)];
+                      const lo = clamp(Math.min(pair[0], pair[1]), min, max);
+                      const hi = clamp(Math.max(pair[0], pair[1]), min, max);
+                      return (
+                        <div key={key} className="fx-param">
+                          <div className="fx-param-head">
+                            <span className="fx-param-label" id={`${inputId}-label`}>{label}</span>
+                            <span className="fx-value">{lo === hi ? formatNumber(lo) : `${formatNumber(lo)}–${formatNumber(hi)}`}{param.unit || ''}</span>
+                          </div>
+                          <RangeSlider id={inputId} labelId={`${inputId}-label`} min={min} max={max} step={param.step || 1} lo={lo} hi={hi} onChange={(a, b) => editor.setParam(key, [a, b])} />
+                        </div>
+                      );
+                    }
+                    // Shown clamped to the slider's range so the value matches the thumb
                     const value = clamp(Number(params[key] ?? param.default), min, max);
                     return (
                       <div key={key} className="fx-param">
@@ -275,6 +291,42 @@ function Slider({ id, min, max, step, value, onChange }: { id: string; min: numb
       style={{ '--fill': `${Math.max(0, Math.min(100, pct))}%` } as CSSProperties}
       onChange={(e) => onChange(parseFloat(e.target.value))}
     />
+  );
+}
+
+// Two-thumb slider for a random min-max range; dragging one thumb past the other pushes it along
+function RangeSlider({ id, labelId, min, max, step, lo, hi, onChange }: {
+  id: string; labelId: string; min: number; max: number; step: number; lo: number; hi: number;
+  onChange: (lo: number, hi: number) => void;
+}) {
+  const pct = (v: number) => (max > min ? ((v - min) / (max - min)) * 100 : 0);
+  return (
+    <div className="fx-range" style={{ '--lo': `${pct(lo)}%`, '--hi': `${pct(hi)}%` } as CSSProperties}>
+      <input
+        id={`${id}-min`}
+        type="range"
+        className="fx-range-input"
+        aria-labelledby={labelId}
+        aria-label="Minimum"
+        min={min}
+        max={max}
+        step={step}
+        value={lo}
+        onChange={(e) => { const v = parseFloat(e.target.value); onChange(v, Math.max(v, hi)); }}
+      />
+      <input
+        id={`${id}-max`}
+        type="range"
+        className="fx-range-input"
+        aria-labelledby={labelId}
+        aria-label="Maximum"
+        min={min}
+        max={max}
+        step={step}
+        value={hi}
+        onChange={(e) => { const v = parseFloat(e.target.value); onChange(Math.min(lo, v), v); }}
+      />
+    </div>
   );
 }
 

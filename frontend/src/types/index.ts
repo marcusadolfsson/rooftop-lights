@@ -71,8 +71,9 @@ export interface EffectType {
 }
 
 export interface EffectParam {
-  type: 'number' | 'boolean' | 'string';
-  default: number | boolean | string;
+  // 'range' is a [min, max] pair; the effect picks a random value inside it each time
+  type: 'number' | 'boolean' | 'string' | 'range';
+  default: number | boolean | string | [number, number];
   min?: number;
   max?: number;
   step?: number;

@@ -416,9 +416,10 @@ router.get('/effects/types', (req: Request, res: Response) => {
       description: 'Bursts that expand from a random point and fade, in the palette colors',
       defaultColors: [{ r: 255, g: 0, b: 0, w: 0 }, { r: 0, g: 0, b: 0, w: 255 }, { r: 0, g: 255, b: 0, w: 0 }, { r: 0, g: 0, b: 255, w: 0 }],
       params: {
-        interval: { type: 'number', default: 1.5, min: 0.2, max: 10, step: 0.1, label: 'Time between bursts', unit: ' s' },
-        burstTime: { type: 'number', default: 1.5, min: 0.3, max: 5, step: 0.1, label: 'Burst length', unit: ' s' },
-        burstSize: { type: 'number', default: 6, min: 1, max: 20, label: 'Burst size' },
+        interval: { type: 'range', default: [1, 2], min: 0.2, max: 10, step: 0.1, label: 'Time between launches', unit: ' s' },
+        count: { type: 'range', default: [1, 1], min: 1, max: 6, label: 'Bursts per launch' },
+        burstTime: { type: 'range', default: [1, 2], min: 0.3, max: 5, step: 0.1, label: 'Burst length', unit: ' s' },
+        burstSize: { type: 'range', default: [4, 8], min: 1, max: 20, label: 'Burst size' },
       },
     },
     {

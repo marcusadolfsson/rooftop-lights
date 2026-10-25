@@ -1892,3 +1892,66 @@ body {
   font-size: 0.75rem;
   color: var(--text-primary);
 }
+
+/* Two-thumb min-max slider: both inputs share one track; only their thumbs take pointer events */
+.fx-range {
+  position: relative;
+  height: 20px;
+  margin: 0.2rem 0;
+}
+
+.fx-range::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 6px;
+  transform: translateY(-50%);
+  border-radius: 999px;
+  background: linear-gradient(to right,
+    var(--bg-tertiary) 0 var(--lo),
+    var(--primary-color) var(--lo) var(--hi),
+    var(--bg-tertiary) var(--hi) 100%);
+}
+
+.fx-range-input {
+  -webkit-appearance: none;
+  appearance: none;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  background: none;
+  pointer-events: none;
+  outline: none;
+}
+
+.fx-range-input::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  pointer-events: auto;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  border: 3px solid var(--primary-color);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+  cursor: pointer;
+}
+
+.fx-range-input::-moz-range-thumb {
+  pointer-events: auto;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #fff;
+  border: 3px solid var(--primary-color);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+  cursor: pointer;
+}
+
+.fx-range-input:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.35);
+}

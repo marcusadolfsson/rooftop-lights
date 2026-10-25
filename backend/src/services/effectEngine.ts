@@ -68,6 +68,27 @@ function num(v: unknown, def: number, min: number, max: number): number {
 }
 
 /** Read a boolean param; also accepts the strings "true"/"false" so a stringly-typed save isn't misread. */
+/**
+ * Read a min-max range param ([lo, hi]); a plain number (older designs) means a fixed value.
+ * Both ends are clamped into [min, max] and swapped if reversed.
+ */
+function range(v: unknown, def: [number, number], min: number, max: number): [number, number] {
+  if (Array.isArray(v) && v.length === 2) {
+    const a = num(v[0], def[0], min, max), b = num(v[1], def[1], min, max);
+    return a <= b ? [a, b] : [b, a];
+  }
+  if (v !== undefined && v !== null && v !== '') {
+    const n = num(v, NaN, min, max);
+    if (Number.isFinite(n)) return [n, n];
+  }
+  return def;
+}
+
+/** Pick a value inside [lo, hi] with a 0..1 random number. */
+function within([lo, hi]: [number, number], r: number): number {
+  return lo + (hi - lo) * r;
+}
+
 function bool(v: unknown, def: boolean): boolean {
   if (typeof v === 'boolean') return v;
   if (v === 'true') return true;
@@ -862,25 +883,52 @@ export class EffectEngine {
   private generateFireworks(effect: MotionEffect, realFrame: number): Map<number, RGBW> {
     const frame = new Map<number, RGBW>();
     const palette = effect.colors.length > 0 ? effect.colors : [{ r: 255, g: 0, b: 0, w: 0 }, { r: 0, g: 0, b: 0, w: 255 }];
-    const interval = Math.max(6, Math.round(num(effect.params?.interval, 1.5, 0.2, 30) * FPS));
-    const life = Math.max(6, Math.round(num(effect.params?.burstTime, 1.5, 0.2, 10) * FPS));
-    const maxRadius = num(effect.params?.burstSize, 6, 1, 40);
+    // Each setting is a min-max range; every launch/burst picks its own value inside it
+    const interval = range(effect.params?.interval, [1, 2], 0.2, 30).map(v => v * FPS) as [number, number];
+    const life = range(effect.params?.burstTime, [1, 2], 0.2, 10).map(v => Math.max(6, v * FPS)) as [number, number];
+    const size = range(effect.params?.burstSize, [4, 8], 1, 40);
+    const count = range(effect.params?.count, [1, 1], 1, 10).map(Math.round) as [number, number];
 
     for (const light of this.lights) frame.set(light.light_id, { ...BLACK });
 
-    const n = Math.floor(realFrame / interval);
-    const overlap = Math.ceil(life / interval);
+    // Launch slots are as long as the shortest interval; each slot launches with a probability that
+    // makes the average gap the middle of the range (and never closer than the shortest gap)
+    const slot = Math.max(6, Math.round(interval[0]));
+    const chance = slot / Math.max(slot, (interval[0] + interval[1]) / 2);
+    const n = Math.floor(realFrame / slot);
+    const lookback = Math.ceil((life[1] + FPS * 0.4) / slot);
+
+    type Burst = { x: number; y: number; color: RGBW; t: number; life: number; size: number };
+    const bursts: Burst[] = [];
+    for (let k = n - lookback; k <= n; k++) {
+      if (k < 0 || rand(k, 9) >= chance) continue;
+      const launch = k * slot + Math.floor(rand(k, 1) * slot * 0.5);
+      const many = Math.round(within(count, rand(k, 8)));
+      for (let m = 0; m < many; m++) {
+        // Extra bursts in one launch go off a little after the first, up to 0.4 s apart
+        const t = realFrame - launch - (m === 0 ? 0 : Math.floor(rand(k, m, 10) * FPS * 0.4));
+        const burstLife = within(life, rand(k, m, 6));
+        if (t < 0 || t >= burstLife) continue;
+        bursts.push({
+          x: rand(k, m, 2),
+          y: rand(k, m, 3),
+          color: palette[Math.floor(rand(k, m, 4) * palette.length)],
+          t,
+          life: burstLife,
+          size: within(size, rand(k, m, 5)),
+        });
+      }
+    }
+    if (bursts.length === 0) return frame;
+
     for (let y = 0; y < this.rows; y++) {
       for (const row of this.getSegments(y, effect.scope)) {
         const len = row.length;
-        for (let k = n - overlap; k <= n; k++) {
-          const t = realFrame - (k * interval + Math.floor(rand(k, 1) * interval * 0.5));
-          if (t < 0 || t >= life) continue;
-          const x0 = rand(k, 2) * (len - 1);
-          const y0 = rand(k, 3) * (this.rows - 1);
-          const color = palette[Math.floor(rand(k, 4) * palette.length)];
-          const p = t / life;
-          const radius = maxRadius * Math.sqrt(p);
+        for (const b of bursts) {
+          const x0 = b.x * (len - 1);
+          const y0 = b.y * (this.rows - 1);
+          const p = b.t / b.life;
+          const radius = b.size * Math.sqrt(p);
           const fadeOut = 1 - p;
           for (let j = 0; j < len; j++) {
             const d = Math.hypot(j - x0, (y - y0) * 1.5);
@@ -888,7 +936,7 @@ export class EffectEngine {
             const ring = Math.max(0, 1 - Math.abs(d - radius));
             const glow = p < 0.25 && d < radius ? 0.3 * (1 - p / 0.25) : 0;
             const k2 = Math.max(ring, glow) * fadeOut;
-            if (k2 > 0) frame.set(row[j].light_id, maxColor(frame.get(row[j].light_id)!, scaleColor(color, k2)));
+            if (k2 > 0) frame.set(row[j].light_id, maxColor(frame.get(row[j].light_id)!, scaleColor(b.color, k2)));
           }
         }
       }

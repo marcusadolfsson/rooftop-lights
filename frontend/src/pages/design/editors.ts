@@ -149,7 +149,7 @@ export type StaticEditor = ReturnType<typeof useStaticEditor>;
 // Motion designs
 // ---------------------------------------------------------------------------
 
-type MotionParams = Record<string, number | boolean | string | string[]>;
+type MotionParams = Record<string, number | boolean | string | string[] | number[]>;
 type MotionScope = 'all' | 'wall' | 'group';
 
 interface MotionState {
@@ -349,7 +349,7 @@ export function useMotionEditor({ preview, reload, setError, autoPreview, effect
 
   const setSpeed = (v: number) => setState((s) => ({ ...s, speed: v }));
   const setScope = (v: MotionScope) => setState((s) => ({ ...s, scope: v }));
-  const setParam = (key: string, v: number | boolean | string | string[]) => setState((s) => ({ ...s, params: { ...s.params, [key]: v } }));
+  const setParam = (key: string, v: number | boolean | string | string[] | number[]) => setState((s) => ({ ...s, params: { ...s.params, [key]: v } }));
 
   // AI result. asNew: freshly generated (unsaved) rather than an edit of the current design.
   const applyGenerated = (data: { effect?: string; colors?: RGBW[]; speed?: number; scope?: string; params?: MotionParams }, asNew: boolean) => {
