@@ -93,6 +93,25 @@ function axisRange(width: number, v: { cos: number; sin: number }): { min: numbe
   return { min: Math.min(...xs) + Math.min(...ys), max: Math.max(...xs) + Math.max(...ys) };
 }
 
+const FPS = 30;
+
+/**
+ * Optional "pause before looping": params.pause seconds of darkness appended to each cycle.
+ * frameNum is already speed-scaled, so the pause is scaled the same way to stay in real seconds.
+ * Returns how many `unit`-frame steps the pause lasts (0 when unset).
+ */
+function pauseSteps(effect: MotionEffect, unit: number): number {
+  const seconds = num(effect.params?.pause, 0, 0, 600);
+  return Math.round((seconds * FPS * effect.speed) / unit);
+}
+
+/** Position within a cycle of `cycle` steps followed by `pause` dark steps; null while paused. */
+function cycleStep(step: number, cycle: number, pause: number): number | null {
+  if (cycle <= 0) return null;
+  const m = step % (cycle + pause);
+  return m < cycle ? m : null;
+}
+
 /** Wall ids a Per Wall effect is limited to (empty = all walls). */
 function selectedWallIds(effect: MotionEffect): string[] {
   const ids = effect.params?.wallIds;
@@ -368,6 +387,7 @@ export class EffectEngine {
     // Let the head travel past the edge until the whole tail has left the frame before looping/turning
     const tailExit = bool(effect.params?.tailExit, true);
     const step = Math.floor(frameNum / 4);
+    const pause = pauseSteps(effect, 4);
 
     // Initialize all to off
     for (const light of this.lights) {
@@ -387,9 +407,11 @@ export class EffectEngine {
         let pos: number;
         let movingForward: boolean;
 
+        const local = cycleStep(step, bounce ? span * 2 : span, pause);
+        if (local === null) continue; // pausing before the next loop
+
         if (bounce) {
-          const cycleLength = span * 2;
-          const raw = step % cycleLength;
+          const raw = local;
           if (raw >= span) {
             // Coming back: re-enter at the far edge and run past the near edge by the same margin
             pos = totalWidth - 1 - (raw - span);
@@ -399,7 +421,7 @@ export class EffectEngine {
             movingForward = true;
           }
         } else {
-          pos = step % span;
+          pos = local;
           movingForward = true;
         }
 
@@ -557,6 +579,7 @@ export class EffectEngine {
     const chaseColor: RGBW = effect.colors[0] || { r: 0, g: 0, b: 0, w: 255 };
     const groupSize = Math.round(num(effect.params?.groupSize || 3, 3, 1, 1000));
     const step = Math.floor(frameNum / 4);
+    const pause = pauseSteps(effect, 4);
 
     // Initialize all to off
     for (const light of this.lights) {
@@ -565,7 +588,8 @@ export class EffectEngine {
 
     for (let y = 0; y < 3; y++) {
       for (const row of this.getSegments(y, effect.scope)) {
-        const pos = step % row.length;
+        const pos = cycleStep(step, row.length, pause);
+        if (pos === null) continue; // pausing after a full lap
 
         for (let g = 0; g < Math.min(groupSize, row.length); g++) {
           const idx = (pos + g) % row.length;
@@ -583,7 +607,16 @@ export class EffectEngine {
     const breatheColor: RGBW = effect.colors[0] || { r: 0, g: 0, b: 0, w: 255 };
     const speed = num(effect.params?.speed || 0.05, 0.05, 0.0001, 10);
 
-    const brightness = Math.sin(frameNum * speed) * 0.5 + 0.5;
+    let brightness: number;
+    const pause = pauseSteps(effect, 1);
+    if (pause > 0) {
+      // Each breath starts and ends dark, then holds dark for the pause
+      const period = Math.round((2 * Math.PI) / speed);
+      const t = cycleStep(Math.floor(frameNum), period, pause);
+      brightness = t === null ? 0 : 0.5 - 0.5 * Math.cos(t * speed);
+    } else {
+      brightness = Math.sin(frameNum * speed) * 0.5 + 0.5;
+    }
 
     for (const light of this.lights) {
       frame.set(light.light_id, {
@@ -604,6 +637,7 @@ export class EffectEngine {
     const text = (typeof effect.params?.text === 'string' && effect.params.text ? effect.params.text : 'HELLO')
       .slice(0, MAX_TEXT_LENGTH).toUpperCase();
     const step = Math.floor(frameNum / 6);
+    const pause = pauseSteps(effect, 6);
 
     // Initialize all to off
     for (const light of this.lights) {
@@ -617,9 +651,11 @@ export class EffectEngine {
 
     for (let y = 0; y < 3; y++) {
       for (const row of this.getSegments(y, effect.scope)) {
+        const local = cycleStep(step, bitmapWidth + row.length, pause);
+        if (local === null) continue; // pausing after the text has scrolled off
         for (let j = 0; j < row.length; j++) {
           const light = row[j];
-          const bx = ((j + step) % (bitmapWidth + row.length) - row.length);
+          const bx = ((j + local) % (bitmapWidth + row.length) - row.length);
           if (bx >= 0 && bx < bitmapWidth && bitmap[2 - y]?.[bx]) {
             frame.set(light.light_id, textColor);
           }

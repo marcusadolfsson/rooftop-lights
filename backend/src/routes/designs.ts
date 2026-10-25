@@ -293,6 +293,7 @@ router.get('/effects/types', (req: Request, res: Response) => {
         bounce: { type: 'boolean', default: true },
         tailExit: { type: 'boolean', default: true, label: 'Tail leaves frame before looping' },
         angle: { type: 'number', default: 0, min: -180, max: 180, step: 15, label: 'Angle', unit: '°' },
+        pause: { type: 'number', default: 0, min: 0, max: 30, step: 0.5, label: 'Pause before looping', unit: ' s' },
       },
     },
     {
@@ -336,6 +337,7 @@ router.get('/effects/types', (req: Request, res: Response) => {
       defaultColors: [{ r: 0, g: 0, b: 0, w: 255 }],
       params: {
         groupSize: { type: 'number', default: 3, min: 1, max: 10 },
+        pause: { type: 'number', default: 0, min: 0, max: 30, step: 0.5, label: 'Pause before looping', unit: ' s' },
       },
     },
     {
@@ -345,6 +347,7 @@ router.get('/effects/types', (req: Request, res: Response) => {
       defaultColors: [{ r: 0, g: 0, b: 0, w: 255 }],
       params: {
         speed: { type: 'number', default: 0.05, min: 0.01, max: 0.2, step: 0.01 },
+        pause: { type: 'number', default: 0, min: 0, max: 30, step: 0.5, label: 'Pause before looping', unit: ' s' },
       },
     },
     {
@@ -354,6 +357,7 @@ router.get('/effects/types', (req: Request, res: Response) => {
       defaultColors: [{ r: 0, g: 0, b: 0, w: 255 }],
       params: {
         text: { type: 'string', default: 'HELLO' },
+        pause: { type: 'number', default: 0, min: 0, max: 30, step: 0.5, label: 'Pause before looping', unit: ' s' },
       },
     },
   ];
