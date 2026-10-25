@@ -297,6 +297,7 @@ router.get('/effects/types', (req: Request, res: Response) => {
         { r: 0, g: 0, b: 200, w: 0 },
       ],
       params: {
+        syncWalls: { type: 'boolean', default: false, label: 'Sync walls (short walls keep pace with the longest)' },
         smooth: { type: 'boolean', default: false, label: 'Sub-pixel blending' },
         size: { type: 'number', default: 1, min: 1, max: 10, label: 'Size' },
         tailLength: { type: 'number', default: 8, min: 0, max: 20, label: 'Tail length' },
@@ -367,6 +368,7 @@ router.get('/effects/types', (req: Request, res: Response) => {
         { r: 0, g: 0, b: 0, w: 255 },
       ],
       params: {
+        syncWalls: { type: 'boolean', default: false, label: 'Sync walls (short walls keep pace with the longest)' },
         smooth: { type: 'boolean', default: false, label: 'Sub-pixel blending' },
         groupSize: { type: 'number', default: 3, min: 1, max: 10, label: 'Size' },
         tail: { type: 'number', default: 0, min: 0, max: 10, label: 'Comet tail' },
@@ -384,6 +386,7 @@ router.get('/effects/types', (req: Request, res: Response) => {
         { r: 0, g: 0, b: 0, w: 0 },
       ],
       params: {
+        syncWalls: { type: 'boolean', default: false, label: 'Sync walls (short walls keep pace with the longest)' },
         smooth: { type: 'boolean', default: false, label: 'Sub-pixel blending' },
         origin: { type: 'number', default: 50, min: 0, max: 100, step: 5, label: 'Start point', unit: '%' },
         hold: { type: 'number', default: 1, min: 0, max: 30, step: 0.5, label: 'Hold when full', unit: ' s' },

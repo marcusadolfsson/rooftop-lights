@@ -18,12 +18,12 @@ export const MIN_SPEED = 0.01;
 // Params the effect types endpoint (routes/designs.ts) declares as booleans. The engine also reads
 // "true"/"false" strings, so those are allowed; anything else is a mistake worth a 400.
 const BOOLEAN_PARAMS: Record<string, string[]> = {
-  comet: ['reverse', 'bounce', 'tailExit', 'smooth'],
+  comet: ['reverse', 'bounce', 'tailExit', 'smooth', 'syncWalls'],
   rainbow: ['adjustDefective'],
   wave: ['bounce'],
   sine: ['reverse'],
-  converge: ['bounce', 'smooth'],
-  expand: ['shrink', 'smooth'],
+  converge: ['bounce', 'smooth', 'syncWalls'],
+  expand: ['shrink', 'smooth', 'syncWalls'],
   candy_cane: ['smooth'],
   checkerboard: ['smooth'],
   text: ['smooth'],

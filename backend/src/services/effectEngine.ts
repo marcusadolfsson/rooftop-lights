@@ -139,6 +139,30 @@ function realFrameOf(effect: MotionEffect, frameNum: number): number {
   return frameNum / effect.speed;
 }
 
+/**
+ * Like cycleStep, but for "Sync walls": the cycle is timed by the longest segment's phases and each
+ * moving phase is stretched onto this segment's (shorter) phase, so every wall starts and finishes
+ * each phase together. Phases of equal length (holds) map one to one. Null while paused.
+ */
+function syncedCycleStep(step: number, own: number[], longest: number[], pause: number): number | null {
+  const local = cycleStep(step, longest.reduce((a, b) => a + b, 0), pause);
+  if (local === null) return null;
+  let a = 0;
+  let b = 0;
+  for (let i = 0; i < longest.length; i++) {
+    const A = longest[i];
+    const B = own[i] ?? 0;
+    if (local < a + A) {
+      // An empty phase on this segment: stay on the last step of the previous phase
+      if (B <= 0) return Math.max(0, b - 1);
+      return b + Math.min(B - 1, Math.floor(((local - a) * B) / A));
+    }
+    a += A;
+    b += B;
+  }
+  return Math.max(0, b - 1);
+}
+
 /** Position within a cycle of `cycle` steps followed by `pause` dark steps; null while paused. */
 function cycleStep(step: number, cycle: number, pause: number): number | null {
   if (cycle <= 0) return null;
@@ -673,6 +697,15 @@ export class EffectEngine {
     return frame;
   }
 
+  /** Length of the longest segment for a scope (used to keep shorter walls in step with it). */
+  private longestSegment(scope: MotionEffect['scope']): number {
+    let longest = 0;
+    for (let y = 0; y < this.rows; y++) {
+      for (const row of this.getSegments(y, scope)) longest = Math.max(longest, row.length);
+    }
+    return longest;
+  }
+
   // Comet - bright head with fading tail
   private generateComet(effect: MotionEffect, frameNum: number): Map<number, RGBW> {
     const frame = new Map<number, RGBW>();
@@ -694,29 +727,40 @@ export class EffectEngine {
     }
 
     const dir = angleVector(effect);
+    const sync = bool(effect.params?.syncWalls, false) && effect.scope !== 'all';
+
+    // Pass geometry for a segment `len` lights long
+    const passes = (len: number) => {
+      // Positions are measured along the angle axis; at 0° that's simply the index along the row
+      const range = axisRange(len, this.rows, dir);
+      const totalWidth = Math.round(range.max - range.min) + 1;
+      // Head steps per pass; with tailExit the head runs tailLength past the edge so the tail fully clears
+      const span = totalWidth + (tailExit ? tailLength + size - 1 : 0);
+      // Bounce turns around without repeating a step. With tailExit each pass stops on the last
+      // frame the tail is still visible and the next re-enters at the far edge (the turn happens
+      // off-screen). Without it the leading edge reverses in place: out until it fills the far end,
+      // back until one step short of the near end (all the way, when a pause follows), so neither
+      // end is shown twice. With a 1-light head that's 0..W-1 out, W-2..1 back.
+      const fwdStart = tailExit || pause > 0 ? 0 : Math.min(size - 1, totalWidth - 1);
+      const out = tailExit ? span - 1 : totalWidth - fwdStart;
+      const backStart = tailExit ? totalWidth - 1 : totalWidth - 1 - size;
+      const backEnd = tailExit ? totalWidth - span + 1 : pause > 0 ? 0 : 1;
+      const back = Math.max(0, backStart - backEnd + 1);
+      const phases = bounce ? (out + back > 0 ? [out, back] : [1]) : [span];
+      return { range, totalWidth, fwdStart, out, backStart, phases };
+    };
+    const longest = sync ? passes(this.longestSegment(effect.scope)).phases : [];
 
     for (let y = 0; y < this.rows; y++) {
       for (const row of this.getSegments(y, effect.scope)) {
-        // Positions are measured along the angle axis; at 0° that's simply the index along the row
-        const range = axisRange(row.length, this.rows, dir);
-        const totalWidth = Math.round(range.max - range.min) + 1;
-        // Head steps per pass; with tailExit the head runs tailLength past the edge so the tail fully clears
-        const span = totalWidth + (tailExit ? tailLength + size - 1 : 0);
-        // Bounce turns around without repeating a step. With tailExit each pass stops on the last
-        // frame the tail is still visible and the next re-enters at the far edge (the turn happens
-        // off-screen). Without it the leading edge reverses in place: out until it fills the far end,
-        // back until one step short of the near end (all the way, when a pause follows), so neither
-        // end is shown twice. With a 1-light head that's 0..W-1 out, W-2..1 back.
-        const fwdStart = tailExit || pause > 0 ? 0 : Math.min(size - 1, totalWidth - 1);
-        const out = tailExit ? span - 1 : totalWidth - fwdStart;
-        const backStart = tailExit ? totalWidth - 1 : totalWidth - 1 - size;
-        const backEnd = tailExit ? totalWidth - span + 1 : pause > 0 ? 0 : 1;
-        const back = Math.max(0, backStart - backEnd + 1);
+        const { range, totalWidth, fwdStart, out, backStart, phases } = passes(row.length);
 
         let pos: number;
         let movingForward: boolean;
 
-        const local = cycleStep(step, bounce ? Math.max(1, out + back) : span, pause);
+        const local = sync
+          ? syncedCycleStep(step, phases, longest, pause)
+          : cycleStep(step, phases.reduce((a, b) => a + b, 0), pause);
         if (local === null) continue; // pausing before the next loop
 
         if (bounce) {
@@ -878,15 +922,20 @@ export class EffectEngine {
     const hold = Math.round((num(effect.params?.hold, 1, 0, 600) * FPS * effect.speed) / 4);
     const step = Math.floor(frameNum / 4);
     const pause = pauseSteps(effect, 4);
+    const sync = bool(effect.params?.syncWalls, false) && effect.scope !== 'all';
+    // Steps until the fill reaches the farther end of a segment `len` lights long
+    const reachOf = (len: number) => Math.ceil(Math.max(origin * (len - 1), len - 1 - origin * (len - 1))) + 1;
+    const phasesOf = (reach: number) => [reach, hold, shrink ? reach : 0];
+    const longest = sync ? phasesOf(reachOf(this.longestSegment(effect.scope))) : [];
 
     for (let y = 0; y < this.rows; y++) {
       for (const row of this.getSegments(y, effect.scope)) {
         const len = row.length;
         const center = origin * (len - 1);
-        // Steps until the fill reaches the farther end
-        const reach = Math.ceil(Math.max(center, len - 1 - center)) + 1;
-        const cycle = reach + hold + (shrink ? reach : 0);
-        const local = cycleStep(step, cycle, pause);
+        const reach = reachOf(len);
+        const local = sync
+          ? syncedCycleStep(step, phasesOf(reach), longest, pause)
+          : cycleStep(step, reach + hold + (shrink ? reach : 0), pause);
         // Radius of the filled area (in lights from the center); -1 = nothing lit
         let radius: number;
         if (local === null) radius = -1;
@@ -946,25 +995,31 @@ export class EffectEngine {
     const hold = Math.round(num(effect.params?.hold, 0, 0, 600) * FPS * effect.speed / 4);
     const step = Math.floor(frameNum / 4);
     const pause = pauseSteps(effect, 4);
+    const sync = bool(effect.params?.syncWalls, false) && effect.scope !== 'all';
 
     for (const light of this.lights) {
       frame.set(light.light_id, { ...BLACK });
     }
+
+    // Steps until the two heads reach the middle. On 1-2 light segments the ends already touch,
+    // so spend one step apart before the meeting step instead of being "met" forever
+    const travelOf = (len: number) => Math.max(2, Math.ceil(len / 2));
+    // Inward pass, optional hold while together, then (with bounce) the outward pass. The outward
+    // pass stops one short of the ends when looping straight back in, so the end position isn't
+    // shown twice (with a pause it runs all the way out first)
+    const phasesOf = (travel: number) => [travel, hold, bounce ? Math.max(0, pause > 0 ? travel - 1 : travel - 2) : 0];
+    const longest = sync ? phasesOf(travelOf(this.longestSegment(effect.scope))) : [];
 
     for (let y = 0; y < this.rows; y++) {
       for (const row of this.getSegments(y, effect.scope)) {
         const len = row.length;
         // Furthest the heads get: the middle (they overlap on odd lengths)
         const maxHead = Math.ceil(len / 2) - 1;
-        // Steps until the two heads reach the middle. On 1-2 light segments the ends already touch,
-        // so spend one step apart before the meeting step instead of being "met" forever
-        const travel = Math.max(2, maxHead + 1);
-        // With bounce the outward pass stops one short of the ends when looping straight back in,
-        // so the end position isn't shown twice (with a pause it runs all the way out first)
-        const outward = bounce ? Math.max(0, pause > 0 ? travel - 1 : travel - 2) : 0;
-        // Inward pass, optional hold while together, then (with bounce) the outward pass
-        const cycle = travel + hold + outward;
-        const local = cycleStep(step, cycle, pause);
+        const travel = travelOf(len);
+        const phases = phasesOf(travel);
+        const local = sync
+          ? syncedCycleStep(step, phases, longest, pause)
+          : cycleStep(step, phases[0] + phases[1] + phases[2], pause);
         if (local === null) continue; // pausing before the next loop
 
         let head: number;
