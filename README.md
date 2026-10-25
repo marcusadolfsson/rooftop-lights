@@ -72,12 +72,12 @@ On first start the database is seeded with 96 RGBW lights:
 | East | 13 × 3 | 39 |
 | North | 3 × 3 | 9 |
 
-Each RGBW light uses 4 DMX channels (R, G, B, W), starting at `((light_id - 1) * 4) + 1`, so the default layout fills 384 channels of a single universe.
+Each RGBW light uses 4 DMX channels (R, G, B, W), starting at `((light_id - 1) * 4) + 1`, so the default layout fills 384 channels of one universe. Lights can be patched past channel 512: channel `N` goes to universe `base + floor((N - 1) / 512)`, for up to 16 universes. A light can't straddle a universe boundary.
 
 ## Tech stack
 
-- **Backend:** Node.js 20, Express, TypeScript, better-sqlite3, ws
-- **Frontend:** React 18, TypeScript, Vite, react-colorful, three.js via @react-three/fiber
+- **Backend:** Node.js 24, Express, TypeScript, better-sqlite3, ws
+- **Frontend:** React 19, TypeScript, Vite 8, React Router 7, react-colorful, three.js via @react-three/fiber 9
 - **Protocol:** ArtNet (ArtDMX over UDP 6454)
 - **Database:** SQLite (WAL mode)
 - **AI (optional):** Anthropic Claude API
@@ -129,10 +129,13 @@ cd frontend && npm install && npm run dev    # UI on :5173, proxies /api and /ws
 | `PORT` | HTTP port | `3030` |
 | `DATABASE_PATH` | SQLite file | `/app/data/rooftop-lights.db` |
 | `ANTHROPIC_API_KEY` | Enables the AI designer | unset |
-| `TZ` | Timezone used to evaluate schedule times | container default (UTC) |
+| `ANTHROPIC_MODEL` | Claude model for the AI designer | `claude-sonnet-5-5` |
+| `TZ` | Timezone used to evaluate schedule times | `America/New_York` (set in the compose files) |
+| `CORS_ORIGINS` | Extra origins allowed to call the API, comma-separated | same origin only |
+| `AI_CODE_TIMEOUT_MS` | Time budget per frame for AI effect code | `20` |
 | `NODE_ENV` | `production` or `development` | `production` |
 
-Set `TZ` (for example `TZ=America/New_York`) if your schedules should follow local time.
+Schedule times are evaluated in the container's `TZ`, and the Schedule page shows which zone that is. Local development without Docker needs Node 20.19+ or 22.12+; the images use Node 24.
 
 ### Health check
 
@@ -140,7 +143,13 @@ Set `TZ` (for example `TZ=America/New_York`) if your schedules should follow loc
 
 ## Security
 
-The app has **no authentication**. Anyone who can reach port 3030 can change the lights, and AI effects run their generated JavaScript inside the server process. Keep it on a private network or put it behind an authenticating reverse proxy.
+The app has **no authentication**. Anyone who can reach port 3030 can change the lights. Keep it on a private network and put it behind an authenticating reverse proxy.
+
+These protections are built in:
+
+- **AI effect code runs in a sandbox.** It runs in a separate `node:vm` context with no `require`, `process`, `eval` or `Function`, and gets a read-only copy of its inputs. Each frame has a time budget of 20 ms by default. Code that throws or runs too long is switched off for 10 seconds, and its lights go dark. A `vm` context isn't a hard security boundary, so the reverse proxy is still needed.
+- **Writes from other sites are rejected.** Cross-origin requests that change data (POST, PUT, DELETE) are refused unless the origin is listed in `CORS_ORIGINS`. That stops other web pages from controlling the lights through a visitor's browser.
+- **Invalid input gets a 400.** Bad designs, playlists, schedules and light settings are rejected with a clear error. A broken design that is already stored can't crash the render loop.
 
 ## API
 
