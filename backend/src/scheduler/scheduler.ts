@@ -2,7 +2,7 @@ import type Database from 'better-sqlite3';
 import type { WebSocket } from 'ws';
 import { getDatabase } from '../models/database.js';
 import { getArtNetController, ArtNetController } from '../artnet/artnet.js';
-import { getEffectEngine, MotionEffect, RGBW, Light } from '../services/effectEngine.js';
+import { getEffectEngine, normalizeMotionEffect, MotionEffect, RGBW, Light } from '../services/effectEngine.js';
 import { findActiveSchedule, ScheduleRow } from './activeSchedule.js';
 import { logRateLimited } from '../utils/rateLimitedLog.js';
 
@@ -453,11 +453,11 @@ export class Scheduler {
       return engine.generateStaticFrame({ colors });
     } else if (type === 'motion') {
       const motionData = data as MotionEffect;
-      const speed = typeof motionData.speed === 'number' && Number.isFinite(motionData.speed) && motionData.speed > 0
-        ? motionData.speed
-        : 1;
+      // Same normalized/clamped speed the engine renders with, so frame scaling and the engine's
+      // seconds-based timing agree (e.g. a stored speed below the 0.01 minimum)
+      const speed = normalizeMotionEffect(motionData).speed;
       const scaledFrame = Math.floor(frame * speed);
-      return engine.generateMotionFrame(motionData, scaledFrame);
+      return engine.generateMotionFrame(motionData, scaledFrame, frame);
     }
 
     return BLANK;

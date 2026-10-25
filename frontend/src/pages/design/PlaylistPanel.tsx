@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { Design, Playlist } from '../../types';
 import SavedList, { trashIcon } from './SavedList';
 import type { PlaylistEditor } from './editors';
@@ -13,6 +13,28 @@ interface PlaylistPanelProps {
 
 export default function PlaylistPanel({ editor, designs, playlists, sidebarHeader, onSave }: PlaylistPanelProps) {
   const { selectedPlaylist, items, dragKey } = editor;
+
+  // Move buttons by `${item key}:${delta}`. After a move, focus follows the item; when its
+  // arrow just became disabled (top/bottom) focus goes to the other arrow instead of <body>.
+  const moveButtons = useRef(new Map<string, HTMLButtonElement>());
+  const [moved, setMoved] = useState<{ key: string; delta: -1 | 1 } | null>(null);
+  useEffect(() => {
+    if (!moved) return;
+    const idx = items.findIndex((i) => i.key === moved.key);
+    if (idx < 0) return;
+    const atEnd = moved.delta === -1 ? idx === 0 : idx === items.length - 1;
+    const delta = atEnd ? -moved.delta : moved.delta;
+    moveButtons.current.get(`${moved.key}:${delta}`)?.focus();
+    setMoved(null);
+  }, [items, moved]);
+  const move = (key: string, delta: -1 | 1) => {
+    editor.moveItem(key, delta);
+    setMoved({ key, delta });
+  };
+  const moveButtonRef = (key: string, delta: -1 | 1) => (el: HTMLButtonElement | null) => {
+    if (el) moveButtons.current.set(`${key}:${delta}`, el);
+    else moveButtons.current.delete(`${key}:${delta}`);
+  };
 
   return (
     <div className="design-layout">
@@ -94,8 +116,8 @@ export default function PlaylistPanel({ editor, designs, playlists, sidebarHeade
                   </select>
                   {/* HTML drag and drop doesn't work with touch, so phones get move buttons */}
                   <span className="playlist-item-move">
-                    <button type="button" className="btn-icon" aria-label={`Move ${item.design_name ?? 'item'} up`} disabled={idx === 0} onClick={() => editor.moveItem(item.key, -1)}>↑</button>
-                    <button type="button" className="btn-icon" aria-label={`Move ${item.design_name ?? 'item'} down`} disabled={idx === items.length - 1} onClick={() => editor.moveItem(item.key, 1)}>↓</button>
+                    <button type="button" className="btn-icon" ref={moveButtonRef(item.key, -1)} aria-label={`Move ${item.design_name ?? 'item'} up`} disabled={idx === 0} onClick={() => move(item.key, -1)}>↑</button>
+                    <button type="button" className="btn-icon" ref={moveButtonRef(item.key, 1)} aria-label={`Move ${item.design_name ?? 'item'} down`} disabled={idx === items.length - 1} onClick={() => move(item.key, 1)}>↓</button>
                   </span>
                   <button className="btn-icon" style={{ padding: '0.2rem', color: 'var(--danger-color)' }} title="Remove" aria-label={`Remove ${item.design_name ?? 'item'}`} onClick={() => editor.removeItem(item.key)}>
                     {trashIcon(14)}

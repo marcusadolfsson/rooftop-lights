@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from 'react';
+import { useEscapeKey } from '../../hooks/useEscapeKey';
 
 interface NameModalProps {
   title: string;
@@ -13,6 +14,7 @@ interface NameModalProps {
 export function NameModal({ title, label, placeholder, initialName = '', onSave, onClose }: NameModalProps) {
   const [name, setName] = useState(initialName);
   const submit = () => { if (name.trim()) onSave(name.trim()); };
+  useEscapeKey(true, onClose);
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -63,6 +65,7 @@ interface AiPromptModalProps {
 /** Prompt modal used for both "generate" and "edit" AI requests. */
 export function AiPromptModal({ title, intro, label, placeholder, value, onChange, loading, error, submitLabel, loadingLabel, onSubmit, onClose }: AiPromptModalProps) {
   const close = () => { if (!loading) onClose(); };
+  useEscapeKey(true, close);
   return (
     <div className="modal-overlay" onClick={close}>
       <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '600px' }} role="dialog" aria-modal="true" aria-label={title}>

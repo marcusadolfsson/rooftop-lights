@@ -4,7 +4,7 @@ import { rgbwToCss } from '../../utils/color';
 import { useIsMobile } from '../../hooks/useMediaQuery';
 import ColorPicker from './ColorPicker';
 import SavedList from './SavedList';
-import type { MotionEditor } from './editors';
+import { isPaletteEffect, MAX_PALETTE_COLORS, MIN_PALETTE_COLORS, type MotionEditor } from './editors';
 
 interface MotionPanelProps {
   editor: MotionEditor;
@@ -28,6 +28,9 @@ const SCOPES = [
   { value: 'group', label: 'Per Group' },
 ] as const;
 
+const SPEED_MIN = 0.1;
+const SPEED_MAX = 2;
+
 export default function MotionPanel({
   editor, designs, effectTypes, walls, sidebarHeader, currentColor, setCurrentColor, hasRGBW,
   onSaveAs, onRenameDesign, onDeleteDesign, onOpenAiGenerator, onOpenAiEditor,
@@ -35,6 +38,8 @@ export default function MotionPanel({
   const { selectedDesign, effect, colors, speed, scope, params, selectedColorIdx, hasChanges } = editor;
   const isAi = effect?.type === 'ai';
   const isMobile = useIsMobile();
+  const hasColors = !!effect && effect.defaultColors.length > 0;
+  const isPalette = !!effect && isPaletteEffect(effect);
 
   const pickColor = (first: RGBW | undefined) => { if (first) setCurrentColor({ ...first }); };
 
@@ -69,7 +74,7 @@ export default function MotionPanel({
           {hasChanges && selectedDesign && <button className="btn btn-primary btn-sm" onClick={editor.save}>Save</button>}
           {hasChanges && selectedDesign && <button className="btn btn-secondary btn-sm" onClick={onSaveAs}>Save As</button>}
           {!selectedDesign && effect && <button className="btn btn-primary btn-sm" onClick={onSaveAs}>Save</button>}
-          {selectedDesign && hasChanges && <button className="btn btn-secondary btn-sm" onClick={editor.cancel}>Cancel</button>}
+          {selectedDesign && hasChanges && <button className="btn btn-secondary btn-sm" onClick={() => pickColor(editor.cancel())}>Cancel</button>}
         </div>
         {!selectedDesign && (
           <div className="card">
@@ -108,7 +113,7 @@ export default function MotionPanel({
               </div>
             )}
             <div className="fx-settings">
-              {effect.defaultColors.length > 0 && (
+              {hasColors && (
                 <div className="form-group" style={{ marginBottom: 0 }}>
                   <span className="form-label" id="motion-colors-label">Colors (click to edit)</span>
                   {effect.colorHint && <p className="fx-color-hint">{effect.colorHint}</p>}
@@ -134,19 +139,39 @@ export default function MotionPanel({
                         </div>
                       );
                     })}
+                    {isPalette && (
+                      <div className="fx-palette-actions">
+                        <button
+                          type="button"
+                          className="btn btn-secondary fx-palette-btn"
+                          onClick={() => pickColor(editor.addColor())}
+                          disabled={colors.length >= MAX_PALETTE_COLORS}
+                          title="Add a color"
+                          aria-label="Add a color"
+                        >+</button>
+                        <button
+                          type="button"
+                          className="btn btn-secondary fx-palette-btn"
+                          onClick={() => pickColor(editor.removeColor())}
+                          disabled={colors.length <= MIN_PALETTE_COLORS}
+                          title={`Remove color ${selectedColorIdx + 1}`}
+                          aria-label={`Remove color ${selectedColorIdx + 1}`}
+                        >−</button>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
               {/* Phones get the picker right under the swatches it edits */}
-              {isMobile && effect.defaultColors.length > 0 && (
+              {isMobile && hasColors && (
                 <ColorPicker color={currentColor} onChange={handleColorChange} hasRGBW={hasRGBW} />
               )}
               <div className="form-group" style={{ marginBottom: 0, minWidth: '160px' }}>
                 <div className="fx-param-head">
                   <label className="form-label" htmlFor="motion-speed" style={{ marginBottom: 0 }}>Speed</label>
-                  <span className="fx-value">{speed.toFixed(1)}×</span>
+                  <span className="fx-value">{clamp(speed, SPEED_MIN, SPEED_MAX).toFixed(1)}×</span>
                 </div>
-                <Slider id="motion-speed" min={0.1} max={2} step={0.1} value={speed} onChange={editor.setSpeed} />
+                <Slider id="motion-speed" min={SPEED_MIN} max={SPEED_MAX} step={0.1} value={speed} onChange={editor.setSpeed} />
               </div>
               <div className="form-group" style={{ marginBottom: 0 }}>
                 <span className="form-label">Scope</span>
@@ -192,14 +217,17 @@ export default function MotionPanel({
                         </div>
                       );
                     }
-                    const value = Number(params[key] ?? param.default);
+                    // Shown clamped to the slider's range so the value matches the thumb
+                    const min = param.min ?? 0;
+                    const max = param.max ?? 100;
+                    const value = clamp(Number(params[key] ?? param.default), min, max);
                     return (
                       <div key={key} className="fx-param">
                         <div className="fx-param-head">
                           <label className="fx-param-label" htmlFor={inputId}>{label}</label>
                           <span className="fx-value">{formatNumber(value)}{param.unit || ''}</span>
                         </div>
-                        <Slider id={inputId} min={param.min ?? 0} max={param.max ?? 100} step={param.step || 1} value={value} onChange={(v) => editor.setParam(key, v)} />
+                        <Slider id={inputId} min={min} max={max} step={param.step || 1} value={value} onChange={(v) => editor.setParam(key, v)} />
                       </div>
                     );
                   })}
@@ -212,7 +240,7 @@ export default function MotionPanel({
 
       {/* Right Column: Color Picker */}
       <div className="color-picker-column">
-        {effect && !isMobile && <ColorPicker color={currentColor} onChange={handleColorChange} hasRGBW={hasRGBW} />}
+        {hasColors && !isMobile && <ColorPicker color={currentColor} onChange={handleColorChange} hasRGBW={hasRGBW} />}
       </div>
     </div>
   );
@@ -222,6 +250,10 @@ export default function MotionPanel({
 function humanize(key: string): string {
   const words = key.replace(/([a-z])([A-Z0-9])/g, '$1 $2').toLowerCase();
   return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+function clamp(v: number, min: number, max: number): number {
+  return Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : min;
 }
 
 function formatNumber(v: number): string {
@@ -248,7 +280,8 @@ function Slider({ id, min, max, step, value, onChange }: { id: string; min: numb
 
 // Per Wall wall selection; an empty list means every wall
 function WallChecklist({ walls, wallIds, onChange }: { walls: Wall[]; wallIds: unknown; onChange: (ids: string[]) => void }) {
-  const chosen = Array.isArray(wallIds) ? (wallIds as string[]) : [];
+  // Ids of deleted walls are ignored, so they can't leave every box unchecked
+  const chosen = Array.isArray(wallIds) ? (wallIds as string[]).filter((id) => walls.some((w) => w.id === id)) : [];
   const isOn = (id: string) => chosen.length === 0 || chosen.includes(id);
   const toggle = (id: string) => {
     const current = walls.filter((w) => isOn(w.id)).map((w) => w.id);

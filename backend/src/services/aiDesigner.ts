@@ -196,13 +196,30 @@ function wallGridToColorMap(
   return colorMap;
 }
 
-// Compact per-wall map of dead channels, e.g. "y=2: 0:gb 1:- 2:r ..." so the model can design around them
+// Dead-light counts per channel (how many lights can't show r, g, b, w)
+function deadChannelCounts(lights: LightInfo[]): Record<'r' | 'g' | 'b' | 'w', number> {
+  const counts = { r: 0, g: 0, b: 0, w: 0 };
+  for (const l of lights) {
+    if (!l.defective_channels) continue;
+    for (const ch of l.defective_channels.split(',')) if (ch in counts) counts[ch as keyof typeof counts]++;
+  }
+  return counts;
+}
+
+// The color channel (R, G or B) that works on the most lights, for the "pick colors that still read well" hint
+function mostWorkingColorChannel(lights: LightInfo[]): string {
+  const counts = deadChannelCounts(lights);
+  const best = (['r', 'g', 'b'] as const).reduce((a, b) => (counts[b] < counts[a] ? b : a));
+  return best.toUpperCase();
+}
+
+// Compact per-wall map of dead channels, e.g. "y=2: 0:gb 1:- 2:r 3:x ..." so the model can design around them
 function getDefectiveContext(walls: WallInfo[], lights: LightInfo[]): string {
   const broken = lights.filter(l => l.defective_channels);
   if (broken.length === 0) return '- All channels on all lights work.';
-  const code = (l?: LightInfo) => (l?.defective_channels ? l.defective_channels.replace(/,/g, '') : '-');
-  const counts: Record<string, number> = { r: 0, g: 0, b: 0, w: 0 };
-  for (const l of broken) for (const ch of l.defective_channels.split(',')) if (ch in counts) counts[ch]++;
+  // "x" = matrix hole (no light at that position), "-" = a light with every channel working
+  const code = (l?: LightInfo) => (!l ? 'x' : l.defective_channels ? l.defective_channels.replace(/,/g, '') : '-');
+  const counts = deadChannelCounts(lights);
   const perWall = walls.map(w => {
     const rows: string[] = [];
     for (let y = w.height - 1; y >= 0; y--) {
@@ -215,8 +232,42 @@ function getDefectiveContext(walls: WallInfo[], lights: LightInfo[]): string {
     return `  ${w.name}:\n${rows.join('\n')}`;
   }).join('\n');
   return `- ${broken.length} of ${lights.length} lights have dead channels (lights with dead R: ${counts.r}, G: ${counts.g}, B: ${counts.b}, W: ${counts.w}).
-- Map (x = column viewed from outside, letters = DEAD channels on that light, "-" = all channels work):
+- Map (x = column viewed from outside, letters = DEAD channels on that light, "-" = all channels work, "x" = no light at that position):
 ${perWall}`;
+}
+
+// Tallest wall, which is how many rows the roof has
+function maxRows(walls: WallInfo[]): number {
+  return Math.max(1, ...walls.map(w => w.height));
+}
+
+// "y=0 (bottom), y=1 (middle), y=2 (top)" for however many rows there are
+function rowNames(rows: number): string {
+  if (rows === 1) return 'y=0 (the only row)';
+  return Array.from({ length: rows }, (_, y) =>
+    `y=${y}${y === 0 ? ' (bottom)' : y === rows - 1 ? ' (top)' : rows === 3 ? ' (middle)' : ''}`
+  ).join(', ');
+}
+
+// Per-wall grid sizes for static designs, from the walls table
+function getGridLayoutContext(walls: WallInfo[]): string {
+  const rows = maxRows(walls);
+  const sameHeight = walls.every(w => w.height === rows);
+  const lines = walls.map(w =>
+    `- ${w.name} wall: ${w.width === 1 ? '1 column (x=0)' : `${w.width} columns (x=0 left to x=${w.width - 1} right, viewed from outside)`}${sameHeight ? '' : `, ${w.height} rows`}`
+  );
+  const heightLine = sameHeight
+    ? `- All walls are ${rows} row${rows === 1 ? '' : 's'} tall: ${rowNames(rows)}`
+    : `- Walls differ in height (up to ${rows} rows): ${rowNames(rows)}`;
+  return [heightLine, ...lines].join('\n');
+}
+
+// The "walls" part of the static RESPONSE FORMAT example, one entry per configured wall
+function getStaticExampleWalls(walls: WallInfo[]): string {
+  return walls.map((w, i) => {
+    const rows = Array.from({ length: w.height }, () => `[${w.width} color${w.width === 1 ? '' : 's'}]`).join(', ');
+    return `    { "wall": "${w.name}", "rows": [ ${rows} ] }${i < walls.length - 1 ? ',' : ''}`;
+  }).join('\n');
 }
 
 function getLightLayoutContext(): string {
@@ -224,6 +275,8 @@ function getLightLayoutContext(): string {
 
   const totalLights = lights.length;
   const defectiveContext = getDefectiveContext(walls, lights);
+  const rows = maxRows(walls);
+  const totalWidth = walls.reduce((s, w) => s + w.width, 0);
 
   const wallDescriptions = walls.map(w =>
     `  - ${w.name}: ${w.width} columns x ${w.height} rows (${w.width * w.height} lights)`
@@ -233,16 +286,15 @@ function getLightLayoutContext(): string {
 LIGHT LAYOUT:
 - ${totalLights} RGBW LED fixtures on a building roofline
 - Each light: RGBW channels, values 0-255
-- 4 walls forming a rectangle (viewed from outside):
+- ${walls.length} walls, in order around the roof (viewed from outside):
 ${wallDescriptions}
-- Rows: y=0 is bottom, y=2 is top
+- Rows: ${rowNames(rows)}
 - Columns: x=0 is left (viewed from outside)
-- West and East are the long walls (13 wide), North and South are short (3 wide)
 
 DEFECTIVE CHANNELS (hardware faults — dead channels always output 0, whatever you send):
 ${defectiveContext}
 - Design for what the lights can actually show. A color that only uses dead channels comes out dark on that light, and a mixed color loses its dead components (e.g. purple on a light with dead blue shows red).
-- When the requested look depends on dead channels, pick colors that still read well on the working channels (the W channel is a clean white; R is the most widely working color channel), unless the user explicitly asks to ignore defects.
+- When the requested look depends on dead channels, pick colors that still read well on the working channels (the W channel is a clean white; ${mostWorkingColorChannel(lights)} is the most widely working color channel), unless the user explicitly asks to ignore defects.
 - In motion code, each light's dead channels are available as L.dead (a string like "gb"; "" when all work) so the animation can adapt per light.
 
 MOTION DESIGN FORMAT:
@@ -252,7 +304,7 @@ You write the animation logic — you can create ANYTHING: comets, waves, games,
 Structure:
 - "effect": always "ai"
 - "colors": array of RGBW color objects the user can edit after generation
-- "speed": number (0.1-5) controlling animation speed (applied before your code runs)
+- "speed": number (0.1-2) controlling animation speed (applied before your code runs)
 - "scope": "all" | "wall" | "group" — how the animation should tile (see SCOPE below)
 - "params": { "code": "...javascript function body..." }
 
@@ -265,13 +317,13 @@ CONTEXT OBJECT (ctx):
 - ctx.lights: array of light objects, each with:
     .id — light ID (use as key in return object)
     .x — column within its wall (0-based)
-    .y — row (0 = bottom, 1 = middle, 2 = top)
-    .wallIndex — which wall (0-3)
+    .y — row (${rowNames(rows)})
+    .wallIndex — which wall (0-${Math.max(0, walls.length - 1)})
     .cx — continuous x across all walls (0 to width-1)
     .dead — dead channels on this light, e.g. "gb" ("" when all channels work)
 - ctx.walls: array of {name, width, height, groupId} — wall info (groupId groups walls together)
-- ctx.width: total columns across all walls (e.g. 32)
-- ctx.height: max rows (e.g. 3)
+- ctx.width: total columns across all walls (${totalWidth})
+- ctx.height: max rows (${rows})
 
 SCOPE — Your code MUST respect ctx.scope to control how the animation tiles:
 - "all": treat all walls as one continuous strip. Use L.cx for horizontal position (0 to ctx.width-1).
@@ -376,6 +428,8 @@ export async function generateDesignFromDescription(
   const { description, baseDesignId, mode = 'create', currentDesignData } = options;
 
   const layoutContext = getLightLayoutContext();
+  const { walls: layoutWalls } = getLayoutData();
+  const layoutRows = maxRows(layoutWalls);
   const existingDesignsContext = getExistingDesignsContext();
 
   // If modifying an existing design, get its full data
@@ -420,7 +474,7 @@ ${baseDesignContext}
 
 CRITICAL DESIGN RULES:
 1. Be LITERAL. If the user says "Swedish flag", produce the EXACT Swedish flag: blue background (#006AA7) with a yellow cross (#FECC00). Not an interpretation — the real thing.
-2. If the user says "American flag", produce the actual American flag pattern: blue canton top-left, red and white stripes. Map it to the grid as faithfully as possible given the 3-row constraint.
+2. If the user says "American flag", produce the actual American flag pattern: blue canton top-left, red and white stripes. Map it to the grid as faithfully as possible given the ${layoutRows}-row constraint.
 3. For any named flag, pattern, or real-world reference: research the actual design and reproduce it precisely with correct colors.
 4. Only be "creative" when the user asks for something abstract (mood, theme, vibe). For concrete requests, be exact.
 INSTRUCTIONS:
@@ -430,14 +484,10 @@ INSTRUCTIONS:
 4. Generate the appropriate JSON response
 
 For STATIC designs, specify colors PER WALL as a 2D grid: one entry per wall in "walls", where rows[y][x] = color.
-Each wall grid is an array of rows (y=0 first, y=2 last). Each row is an array of colors (x=0 to x=width-1).
+Each wall grid is an array of rows (y=0 first, y=${layoutRows - 1} last). Each row is an array of colors (x=0 to x=width-1).
 
 GRID LAYOUT (critical — get this right):
-- All walls are 3 rows tall: y=0 (bottom), y=1 (middle), y=2 (top)
-- West wall: 13 columns (x=0 left to x=12 right, viewed from outside)
-- North wall: 3 columns (x=0 left to x=2 right, viewed from outside)
-- East wall: 13 columns (x=0 left to x=12 right, viewed from outside)
-- South wall: 3 columns (x=0 left to x=2 right, viewed from outside)
+${getGridLayoutContext(layoutWalls)}
 
 FLAG EXAMPLES (follow this level of precision):
 - Swedish flag: ALL lights blue {"r":0,"g":106,"b":167,"w":0}, EXCEPT y=1 (middle row, ALL columns) = yellow {"r":254,"g":204,"b":0,"w":0}, AND x=2 for North/South or x=4 for West/East (cross vertical bar) = yellow across ALL rows
@@ -450,7 +500,7 @@ PATTERN PRINCIPLES:
 - Vertical stripes: vary color by column (x) position
 - Gradients: smoothly interpolate colors across columns or rows
 - Per-wall themes: different colors/patterns for different walls
-- For flags with complex designs: simplify to fit 3 rows but keep proportions and colors accurate
+- For flags with complex designs: simplify to fit ${layoutRows} rows but keep proportions and colors accurate
 
 For MOTION designs, select the most appropriate effect and configure its parameters.
 Think about:
@@ -464,18 +514,11 @@ For static:
   "type": "static",
   "name": "Descriptive Name",
   "walls": [
-    { "wall": "West", "rows": [
-      [color_y0_x0, color_y0_x1, ...],  // row y=0 (bottom), 13 colors
-      [color_y1_x0, color_y1_x1, ...],  // row y=1 (middle), 13 colors
-      [color_y2_x0, color_y2_x1, ...]   // row y=2 (top), 13 colors
-    ] },
-    { "wall": "North", "rows": [ [3 colors], [3 colors], [3 colors] ] },
-    { "wall": "East",  "rows": [ [13 colors], [13 colors], [13 colors] ] },
-    { "wall": "South", "rows": [ [3 colors], [3 colors], [3 colors] ] }
+${getStaticExampleWalls(layoutWalls)}
   ],
   "colors": null, "speed": null, "scope": null, "code": null
 }
-Each color is {"r":0,"g":0,"b":0,"w":0} with integer values 0-255. Rows go from y=0 (bottom) to y=2 (top).
+Each color is {"r":0,"g":0,"b":0,"w":0} with integer values 0-255. Rows go from y=0 (bottom) to y=${layoutRows - 1} (top).
 
 For motion (always the "ai" effect; "code" is the function body described above):
 {

@@ -3,6 +3,8 @@ import * as THREE from 'three';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, Text } from '@react-three/drei';
 import type { Wall } from '../types';
+// Bundled so labels render offline (drei's <Text> otherwise fetches a font from a CDN). troika needs woff/ttf, not woff2.
+import labelFont from '@fontsource/inter/files/inter-latin-500-normal.woff?url';
 
 interface Preview3DProps {
   walls: Wall[];
@@ -133,6 +135,7 @@ function WallGroup({ wall, position, getLightColor, getDefectiveSimulation, show
               <Text
                 position={[0, 0, inside ? -LIGHT_DEPTH / 2 - 0.01 : LIGHT_DEPTH / 2 + 0.01]}
                 rotation={[0, inside ? Math.PI : 0, 0]}
+                font={labelFont}
                 fontSize={0.3}
                 color="#f8fafc"
                 anchorX="center"
@@ -172,6 +175,7 @@ function WallGroup({ wall, position, getLightColor, getDefectiveSimulation, show
       <Text
         position={[0, -panelHeight / 2 - 0.4, 0]}
         rotation={[0, inside ? Math.PI : 0, 0]}
+        font={labelFont}
         fontSize={0.4}
         color="#94a3b8"
         anchorX="center"

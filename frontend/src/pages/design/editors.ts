@@ -162,8 +162,47 @@ interface MotionState {
 
 const EMPTY_MOTION: MotionState = { effect: null, colors: [], speed: 1, scope: 'all', params: {} };
 
+// Per Wall wall ids only mean something with the Per Wall scope. They stay in the editor state
+// (so flipping the scope away and back keeps the selection) but aren't compared, previewed or saved.
+const withoutStaleWallIds = (scope: MotionScope, params: MotionParams): MotionParams => {
+  if (scope === 'wall' || !('wallIds' in params)) return params;
+  const rest = { ...params };
+  delete rest.wallIds;
+  return rest;
+};
+
 const motionSnapshot = (s: MotionState) =>
-  JSON.stringify({ effect: s.effect?.type, colors: s.colors, speed: s.speed, params: s.params, scope: s.scope });
+  JSON.stringify({ effect: s.effect?.type, colors: s.colors, speed: s.speed, params: withoutStaleWallIds(s.scope, s.params), scope: s.scope });
+
+/** Effects whose colors are a free-length palette (a hint but no per-swatch names) */
+export const isPaletteEffect = (fx: EffectType) => !fx.colorLabels && !!fx.colorHint;
+export const MIN_PALETTE_COLORS = 1;
+export const MAX_PALETTE_COLORS = 16;
+
+const WHITE: RGBW = { r: 0, g: 0, b: 0, w: 255 };
+
+const effectDefaults = (fx: EffectType): MotionParams => {
+  const defaults: MotionParams = {};
+  Object.entries(fx.params).forEach(([key, param]) => { defaults[key] = param.default; });
+  return defaults;
+};
+
+// Saved colors, padded with the effect's defaults for swatches added after the design was saved
+// (e.g. Meet in the Middle's Meet color). Palettes keep whatever length was saved.
+const withDefaultColors = (fx: EffectType, saved: RGBW[] | undefined): RGBW[] => {
+  const base = saved && saved.length > 0 ? saved : fx.defaultColors;
+  if (isPaletteEffect(fx)) return [...base];
+  return [...base, ...fx.defaultColors.slice(base.length)];
+};
+
+// Builds editor state from saved/generated data, filling in anything the effect gained since
+const buildMotionState = (fx: EffectType, data: { colors?: RGBW[]; speed?: number; scope?: string; params?: MotionParams }): MotionState => ({
+  effect: fx,
+  colors: withDefaultColors(fx, data.colors),
+  speed: data.speed || 1,
+  scope: (data.scope as MotionScope) || 'all',
+  params: { ...effectDefaults(fx), ...(data.params || {}) },
+});
 
 export function useMotionEditor({ preview, reload, setError, autoPreview, effectTypes }: EditorDeps & { effectTypes: EffectType[] }) {
   const [selectedDesign, setSelectedDesign] = useState<Design | null>(null);
@@ -177,14 +216,14 @@ export function useMotionEditor({ preview, reload, setError, autoPreview, effect
   const { send } = preview;
   const sendState = (s: MotionState) => {
     if (!s.effect) return;
-    send({ kind: 'effect', effectType: s.effect.type, colors: s.colors, params: s.params, speed: s.speed, scope: s.scope });
+    send({ kind: 'effect', effectType: s.effect.type, colors: s.colors, params: withoutStaleWallIds(s.scope, s.params), speed: s.speed, scope: s.scope });
   };
 
   // Debounced auto-preview of edits
   useEffect(() => {
     if (!autoPreview || !effect) return;
     const timeout = setTimeout(() => {
-      send({ kind: 'effect', effectType: effect.type, colors, params, speed, scope });
+      send({ kind: 'effect', effectType: effect.type, colors, params: withoutStaleWallIds(scope, params), speed, scope });
     }, 200);
     return () => clearTimeout(timeout);
   }, [autoPreview, effect, colors, params, speed, scope, send]);
@@ -199,25 +238,15 @@ export function useMotionEditor({ preview, reload, setError, autoPreview, effect
   };
 
   const selectEffect = (fx: EffectType) => {
-    const defaults: MotionParams = {};
-    Object.entries(fx.params).forEach(([key, param]) => { defaults[key] = param.default; });
     setSelectedDesign(null);
-    return replace({ effect: fx, colors: [...fx.defaultColors], speed: 1, scope: 'all', params: defaults }, true);
+    return replace({ effect: fx, colors: [...fx.defaultColors], speed: 1, scope: 'all', params: effectDefaults(fx) }, true);
   };
 
+  // Fills in params and colors added to the effect after the design was saved, so the controls match what renders
   const fromDesignData = (data: MotionDesignData): MotionState | null => {
     const fx = effectTypes.find((e) => e.type === data.type);
     if (!fx) return null;
-    // Fill in params added to the effect after the design was saved, so the controls match what renders
-    const defaults: MotionParams = {};
-    Object.entries(fx.params).forEach(([key, param]) => { defaults[key] = param.default; });
-    return {
-      effect: fx,
-      colors: data.colors || fx.defaultColors,
-      speed: data.speed || 1,
-      scope: data.scope || 'all',
-      params: { ...defaults, ...((data.params as MotionParams) || {}) },
-    };
+    return buildMotionState(fx, { ...data, params: data.params as MotionParams | undefined });
   };
 
   const load = (design: Design) => {
@@ -238,10 +267,11 @@ export function useMotionEditor({ preview, reload, setError, autoPreview, effect
     preview.stop();
   };
 
-  const cancel = () => {
+  // Back to the last saved state; returns the restored selected color (for the picker)
+  const cancel = (): RGBW | undefined => {
     const saved = JSON.parse(savedJson) as { effect?: string; colors?: RGBW[]; speed?: number; scope?: MotionScope; params?: MotionParams };
     const fx = saved.effect ? effectTypes.find((e) => e.type === saved.effect) : undefined;
-    if (!fx) return;
+    if (!fx) return undefined;
     const next: MotionState = {
       effect: fx,
       colors: saved.colors || fx.defaultColors,
@@ -249,12 +279,16 @@ export function useMotionEditor({ preview, reload, setError, autoPreview, effect
       scope: saved.scope || 'all',
       params: saved.params || {},
     };
+    // A palette may have been longer before the cancelled edits
+    const idx = Math.min(selectedColorIdx, Math.max(0, next.colors.length - 1));
     setState(next);
+    setSelectedColorIdx(idx);
     sendState(next);
+    return next.colors[idx];
   };
 
   const designData = (): MotionDesignData | null =>
-    effect ? { type: effect.type, colors, params, speed, scope } : null;
+    effect ? { type: effect.type, colors, params: withoutStaleWallIds(scope, params), speed, scope } : null;
 
   const save = async () => {
     const data = designData();
@@ -293,6 +327,26 @@ export function useMotionEditor({ preview, reload, setError, autoPreview, effect
     });
   };
 
+  // Palette effects: append a copy of the last color and select it; returns it (for the picker)
+  const addColor = (): RGBW | undefined => {
+    if (!effect || !isPaletteEffect(effect) || colors.length >= MAX_PALETTE_COLORS) return undefined;
+    const added = { ...(colors[colors.length - 1] ?? WHITE) };
+    setState((s) => ({ ...s, colors: [...s.colors, added] }));
+    setSelectedColorIdx(colors.length);
+    return added;
+  };
+
+  // Palette effects: remove the selected color; returns the newly selected one (for the picker)
+  const removeColor = (): RGBW | undefined => {
+    if (!effect || !isPaletteEffect(effect) || colors.length <= MIN_PALETTE_COLORS) return undefined;
+    const idx = Math.min(selectedColorIdx, colors.length - 1);
+    const next = colors.filter((_, i) => i !== idx);
+    const nextIdx = Math.min(idx, next.length - 1);
+    setState((s) => ({ ...s, colors: next }));
+    setSelectedColorIdx(nextIdx);
+    return next[nextIdx];
+  };
+
   const setSpeed = (v: number) => setState((s) => ({ ...s, speed: v }));
   const setScope = (v: MotionScope) => setState((s) => ({ ...s, scope: v }));
   const setParam = (key: string, v: number | boolean | string | string[]) => setState((s) => ({ ...s, params: { ...s.params, [key]: v } }));
@@ -302,13 +356,7 @@ export function useMotionEditor({ preview, reload, setError, autoPreview, effect
     const fx = effectTypes.find((e) => e.type === data.effect);
     if (!fx) return undefined;
     if (asNew) setSelectedDesign(null);
-    const next: MotionState = {
-      effect: fx,
-      colors: data.colors || fx.defaultColors,
-      speed: data.speed || 1,
-      scope: (data.scope as MotionScope) || 'all',
-      params: data.params || {},
-    };
+    const next = buildMotionState(fx, data);
     setState(next);
     setSelectedColorIdx(0);
     if (asNew) setSavedJson('{}');
@@ -318,7 +366,7 @@ export function useMotionEditor({ preview, reload, setError, autoPreview, effect
 
   return {
     selectedDesign, setSelectedDesign, effect, colors, speed, scope, params, selectedColorIdx, setSelectedColorIdx, hasChanges,
-    selectEffect, load, clear, cancel, save, saveAs, setColorAt, setSpeed, setScope, setParam, applyGenerated,
+    selectEffect, load, clear, cancel, save, saveAs, setColorAt, addColor, removeColor, setSpeed, setScope, setParam, applyGenerated,
   };
 }
 

@@ -3,6 +3,7 @@ import { useLocation } from 'react-router-dom';
 import { layoutAPI, artnetAPI } from '../utils/api';
 import type { Wall, WallGroup, Light, ArtNetConfig, LayoutData } from '../types';
 import LightIdPreview from '../components/LightIdPreview';
+import { useEscapeKey } from '../hooks/useEscapeKey';
 
 function LayoutPage() {
   const location = useLocation();
@@ -17,6 +18,10 @@ function LayoutPage() {
   const [newGroupName, setNewGroupName] = useState('');
   const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
   const [editingGroupName, setEditingGroupName] = useState('');
+
+  // Esc closes whichever modal is open
+  useEscapeKey(!!selectedLight, () => setSelectedLight(null));
+  useEscapeKey(!!editingWall, () => setEditingWall(null));
 
   useEffect(() => {
     if (isVisible) {
@@ -563,10 +568,10 @@ function LayoutPage() {
       {/* Light Editor Modal */}
       {selectedLight && (
         <div className="modal-overlay" onClick={() => setSelectedLight(null)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
+          <div className="modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="light-modal-title">
             <div className="modal-header">
-              <h3 className="modal-title">Edit Light #{selectedLight.light_id}</h3>
-              <button className="modal-close" onClick={() => setSelectedLight(null)}>
+              <h3 className="modal-title" id="light-modal-title">Edit Light #{selectedLight.light_id}</h3>
+              <button className="modal-close" onClick={() => setSelectedLight(null)} aria-label="Close">
                 &times;
               </button>
             </div>
@@ -673,10 +678,10 @@ function LayoutPage() {
       {/* Wall Editor Modal */}
       {editingWall && (
         <div className="modal-overlay" onClick={() => setEditingWall(null)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
+          <div className="modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="wall-modal-title">
             <div className="modal-header">
-              <h3 className="modal-title">Edit Wall: {editingWall.name}</h3>
-              <button className="modal-close" onClick={() => setEditingWall(null)}>
+              <h3 className="modal-title" id="wall-modal-title">Edit Wall: {editingWall.name}</h3>
+              <button className="modal-close" onClick={() => setEditingWall(null)} aria-label="Close">
                 &times;
               </button>
             </div>

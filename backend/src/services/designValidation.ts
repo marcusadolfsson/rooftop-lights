@@ -12,6 +12,17 @@ export const MOTION_EFFECT_TYPES = [
 
 export const MAX_AI_CODE_LENGTH = 100_000;
 const MAX_COLORS = 4096;
+// The engine clamps speed to this too; slower would never visibly move
+export const MIN_SPEED = 0.01;
+
+// Params the effect types endpoint (routes/designs.ts) declares as booleans. The engine also reads
+// "true"/"false" strings, so those are allowed; anything else is a mistake worth a 400.
+const BOOLEAN_PARAMS: Record<string, string[]> = {
+  comet: ['reverse', 'bounce', 'tailExit'],
+  rainbow: ['adjustDefective'],
+  wave: ['bounce'],
+  converge: ['bounce'],
+};
 
 export type ValidationResult = { ok: true } | { ok: false; error: string };
 
@@ -75,8 +86,8 @@ export function validateMotionData(data: unknown): ValidationResult {
   }
 
   if (speed !== undefined && speed !== null) {
-    if (typeof speed !== 'number' || !Number.isFinite(speed) || speed <= 0 || speed > 100) {
-      return { ok: false, error: '"speed" must be a number greater than 0 and at most 100' };
+    if (typeof speed !== 'number' || !Number.isFinite(speed) || speed < MIN_SPEED || speed > 100) {
+      return { ok: false, error: `"speed" must be a number from ${MIN_SPEED} to 100` };
     }
   }
 
@@ -97,6 +108,15 @@ export function validateMotionData(data: unknown): ValidationResult {
   if (isPlainObject(params) && params.angle !== undefined && params.angle !== null) {
     if (typeof params.angle !== 'number' || !Number.isFinite(params.angle)) {
       return { ok: false, error: 'params.angle must be a number of degrees' };
+    }
+  }
+
+  if (isPlainObject(params)) {
+    for (const key of BOOLEAN_PARAMS[type] ?? []) {
+      const v = params[key];
+      if (v !== undefined && v !== null && typeof v !== 'boolean' && v !== 'true' && v !== 'false') {
+        return { ok: false, error: `params.${key} must be true or false` };
+      }
     }
   }
 

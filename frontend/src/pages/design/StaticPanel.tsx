@@ -130,6 +130,8 @@ export default function StaticPanel({
           {hasChanges && selectedDesign && <button className="btn btn-secondary btn-sm" onClick={onSaveAs}>Save As</button>}
           {hasChanges && !selectedDesign && <button className="btn btn-primary btn-sm" onClick={onSaveAs}>Save</button>}
           {selectedDesign && hasChanges && <button className="btn btn-secondary btn-sm" onClick={editor.cancel}>Cancel</button>}
+          {/* Keeps the row's height while it's empty, so the first paint stroke doesn't push the grid down mid-drag */}
+          {!selectedDesign && !hasChanges && <button type="button" className="btn btn-sm btn-placeholder" aria-hidden="true" tabIndex={-1} disabled>Clear</button>}
         </div>
         {isMobile && layout.walls.length > 1 && (
           <div className="wall-switcher" role="group" aria-label="Wall">

@@ -264,8 +264,8 @@ router.get('/effects/types', (req: Request, res: Response) => {
         { r: 0, g: 0, b: 0, w: 255 },
       ],
       params: {
-        width1: { type: 'number', default: 4, min: 1, max: 16 },
-        width2: { type: 'number', default: 4, min: 1, max: 16 },
+        width1: { type: 'number', default: 4, min: 1, max: 16, label: 'Stripe 1 width' },
+        width2: { type: 'number', default: 4, min: 1, max: 16, label: 'Stripe 2 width' },
         angle: { type: 'number', default: -63, min: -75, max: 75, step: 1, label: 'Stripe angle', unit: '°' },
       },
     },
@@ -289,7 +289,7 @@ router.get('/effects/types', (req: Request, res: Response) => {
       ],
       params: {
         size: { type: 'number', default: 1, min: 1, max: 10, label: 'Size' },
-        tailLength: { type: 'number', default: 8, min: 2, max: 20 },
+        tailLength: { type: 'number', default: 8, min: 2, max: 20, label: 'Tail length' },
         reverse: { type: 'boolean', default: false },
         bounce: { type: 'boolean', default: true },
         tailExit: { type: 'boolean', default: true, label: 'Tail leaves frame before looping' },
@@ -303,8 +303,8 @@ router.get('/effects/types', (req: Request, res: Response) => {
       description: 'Random lights twinkling like stars',
       defaultColors: [{ r: 0, g: 0, b: 0, w: 255 }],
       params: {
-        density: { type: 'number', default: 0.15, min: 0.05, max: 0.5, step: 0.05 },
-        fadeSpeed: { type: 'number', default: 0.3, min: 0.1, max: 1, step: 0.1 },
+        density: { type: 'number', default: 0.15, min: 0.05, max: 0.5, step: 0.05, label: 'Density' },
+        fadeSpeed: { type: 'number', default: 0.3, min: 0.1, max: 1, step: 0.1, label: 'Shimmer speed' },
       },
     },
     {
@@ -326,9 +326,9 @@ router.get('/effects/types', (req: Request, res: Response) => {
         { r: 0, g: 0, b: 200, w: 0 },
       ],
       params: {
-        wavelength: { type: 'number', default: 10, min: 3, max: 32 },
+        wavelength: { type: 'number', default: 10, min: 3, max: 32, label: 'Wavelength' },
         bounce: { type: 'boolean', default: false },
-        waveHeight: { type: 'number', default: 1.0, min: 0.1, max: 1.0, step: 0.1 },
+        waveHeight: { type: 'number', default: 1.0, min: 0.1, max: 1.0, step: 0.1, label: 'Wave height' },
         angle: { type: 'number', default: 0, min: -180, max: 180, step: 15, label: 'Angle', unit: '°' },
       },
     },
@@ -338,7 +338,7 @@ router.get('/effects/types', (req: Request, res: Response) => {
       description: 'A group of lights chasing around the perimeter',
       defaultColors: [{ r: 0, g: 0, b: 0, w: 255 }],
       params: {
-        groupSize: { type: 'number', default: 3, min: 1, max: 10 },
+        groupSize: { type: 'number', default: 3, min: 1, max: 10, label: 'Size' },
         pause: { type: 'number', default: 0, min: 0, max: 30, step: 0.5, label: 'Pause before looping', unit: ' s' },
       },
     },
@@ -365,7 +365,8 @@ router.get('/effects/types', (req: Request, res: Response) => {
       description: 'All lights pulsing together like breathing',
       defaultColors: [{ r: 0, g: 0, b: 0, w: 255 }],
       params: {
-        speed: { type: 'number', default: 0.05, min: 0.01, max: 0.2, step: 0.01 },
+        // Key stays `speed` for saved designs; labelled so it isn't confused with the design Speed
+        speed: { type: 'number', default: 0.05, min: 0.01, max: 0.2, step: 0.01, label: 'Breath rate' },
         pause: { type: 'number', default: 0, min: 0, max: 30, step: 0.5, label: 'Pause before looping', unit: ' s' },
       },
     },

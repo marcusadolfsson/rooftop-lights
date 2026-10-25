@@ -249,6 +249,12 @@ body {
   gap: 0.5rem;
 }
 
+/* Invisible stand-in that reserves a button row's height */
+.btn-placeholder {
+  visibility: hidden;
+  pointer-events: none;
+}
+
 /* Icon Buttons */
 .btn-icon {
   background-color: transparent;
@@ -1849,6 +1855,22 @@ body {
   color: var(--text-secondary);
   text-align: center;
   line-height: 1.2;
+}
+
+/* + / − next to a palette's swatches; same height as a swatch */
+.fx-palette-actions {
+  display: flex;
+  gap: 0.25rem;
+  align-self: flex-start;
+}
+
+.fx-palette-btn {
+  width: 36px;
+  height: 40px;
+  padding: 0;
+  justify-content: center;
+  font-size: 1.25rem;
+  line-height: 1;
 }
 
 .fx-color-hint {

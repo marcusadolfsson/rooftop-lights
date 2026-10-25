@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useLocation } from 'react-router-dom';
 import { designsAPI, playlistsAPI, schedulesAPI, layoutAPI, previewAPI, healthAPI } from '../utils/api';
 import LiveLightPreview from '../components/LiveLightPreview';
+import { useEscapeKey } from '../hooks/useEscapeKey';
 import type { Design, Playlist, Schedule, LayoutData } from '../types';
 
 const ACTIVE_POLL_MS = 30000;
@@ -43,6 +44,14 @@ function SchedulerPage() {
   const [endTime, setEndTime] = useState('16:00');
   const [priority, setPriority] = useState(0);
   const [serverTimeZone, setServerTimeZone] = useState<string | null>(null);
+
+  // Esc closes whichever modal is open
+  const closeScheduleModal = () => {
+    setShowScheduleModal(false);
+    setEditingSchedule(null);
+  };
+  useEscapeKey(showDefaultModal, () => setShowDefaultModal(false));
+  useEscapeKey(showScheduleModal, closeScheduleModal);
 
   // Load/refresh data when page becomes visible
   useEffect(() => {
@@ -405,10 +414,10 @@ function SchedulerPage() {
       {/* Default Schedule Modal */}
       {showDefaultModal && (
         <div className="modal-overlay" onClick={() => setShowDefaultModal(false)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
+          <div className="modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="default-schedule-modal-title">
             <div className="modal-header">
-              <h3 className="modal-title">Set Default Schedule</h3>
-              <button className="modal-close" onClick={() => setShowDefaultModal(false)}>
+              <h3 className="modal-title" id="default-schedule-modal-title">Set Default Schedule</h3>
+              <button className="modal-close" onClick={() => setShowDefaultModal(false)} aria-label="Close">
                 &times;
               </button>
             </div>
@@ -484,19 +493,13 @@ function SchedulerPage() {
 
       {/* Schedule Modal */}
       {showScheduleModal && (
-        <div className="modal-overlay" onClick={() => {
-          setShowScheduleModal(false);
-          setEditingSchedule(null);
-        }}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-overlay" onClick={closeScheduleModal}>
+          <div className="modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="schedule-modal-title">
             <div className="modal-header">
-              <h3 className="modal-title">
+              <h3 className="modal-title" id="schedule-modal-title">
                 {editingSchedule ? 'Edit Schedule' : 'Add Date Schedule'}
               </h3>
-              <button className="modal-close" onClick={() => {
-                setShowScheduleModal(false);
-                setEditingSchedule(null);
-              }}>
+              <button className="modal-close" onClick={closeScheduleModal} aria-label="Close">
                 &times;
               </button>
             </div>

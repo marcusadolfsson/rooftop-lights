@@ -34,7 +34,6 @@ export interface MotionEffect {
   speed: number;
   colors: RGBW[];
   scope: 'wall' | 'all' | 'group';
-  wallIds?: string[];
   params?: Record<string, unknown>;
 }
 
@@ -68,11 +67,13 @@ function num(v: unknown, def: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, n));
 }
 
+/** Read a boolean param; also accepts the strings "true"/"false" so a stringly-typed save isn't misread. */
 function bool(v: unknown, def: boolean): boolean {
-  return typeof v === 'boolean' ? v : def;
+  if (typeof v === 'boolean') return v;
+  if (v === 'true') return true;
+  if (v === 'false') return false;
+  return def;
 }
-
-const ROWS = 3;
 
 /**
  * Direction of travel for directional effects. 0° runs along the strip (the original behavior),
@@ -86,10 +87,10 @@ function angleVector(effect: MotionEffect): { cos: number; sin: number } {
   return { cos: snap(Math.cos(rad)), sin: snap(Math.sin(rad)) };
 }
 
-/** Range of the projected coordinate u = x*cos + y*sin over a segment `width` lights wide and ROWS tall. */
-function axisRange(width: number, v: { cos: number; sin: number }): { min: number; max: number } {
+/** Range of the projected coordinate u = x*cos + y*sin over a segment `width` lights wide and `rows` tall. */
+function axisRange(width: number, rows: number, v: { cos: number; sin: number }): { min: number; max: number } {
   const xs = [0, (width - 1) * v.cos];
-  const ys = [0, (ROWS - 1) * v.sin];
+  const ys = [0, (rows - 1) * v.sin];
   return { min: Math.min(...xs) + Math.min(...ys), max: Math.max(...xs) + Math.max(...ys) };
 }
 
@@ -103,6 +104,16 @@ const FPS = 30;
 function pauseSteps(effect: MotionEffect, unit: number): number {
   const seconds = num(effect.params?.pause, 0, 0, 600);
   return Math.round((seconds * FPS * effect.speed) / unit);
+}
+
+/**
+ * Real (unscaled) frame count for effects whose params are all in real time (seconds, per second,
+ * per minute). frameNum is speed-scaled, so dividing the speed back out keeps those labels true at
+ * any Speed. Callers that know the unscaled frame pass it to generateMotionFrame instead, which
+ * avoids the coarse steps frameNum / speed has at low speeds.
+ */
+function realFrameOf(effect: MotionEffect, frameNum: number): number {
+  return frameNum / effect.speed;
 }
 
 /** Position within a cycle of `cycle` steps followed by `pause` dark steps; null while paused. */
@@ -178,7 +189,6 @@ export function normalizeMotionEffect(effect: unknown): MotionEffect {
     speed: num(e.speed, 1, 0.01, 100),
     colors,
     scope,
-    wallIds: Array.isArray(e.wallIds) ? e.wallIds as string[] : undefined,
     params: isPlainObject(e.params) ? e.params : {},
   };
 }
@@ -236,8 +246,8 @@ const PIXEL_FONT: Record<string, number[][]> = {
 };
 
 export class EffectEngine {
-  private currentFrame: number = 0;
   private walls: Wall[] = [];
+  private rows = 3; // tallest wall's height: how many rows the row-based effects iterate
   private lights: Light[] = [];
   private lightMatrix: Map<string, Light[][]> = new Map(); // wall_id -> 2D array
   private aiRunner = new AICodeRunner();
@@ -268,6 +278,7 @@ export class EffectEngine {
       }
       this.lightMatrix.set(wall.id, matrix);
     }
+    this.rows = Math.max(1, ...this.walls.map(w => w.height));
     this.aiRunner.setLayout(this.buildAILayout());
   }
 
@@ -330,13 +341,18 @@ export class EffectEngine {
     return frame;
   }
 
-  // Generate frame for motion effect
-  generateMotionFrame(rawEffect: MotionEffect, frameNum: number): Map<number, RGBW> {
+  // Generate frame for motion effect. frameNum is speed-scaled; realFrame is the unscaled frame
+  // (used by effects timed in seconds) and defaults to frameNum / speed.
+  generateMotionFrame(rawEffect: MotionEffect, frameNum: number, realFrame?: number): Map<number, RGBW> {
     const effect = normalizeMotionEffect(rawEffect);
-    const frame = this.renderMotion(effect, frameNum);
+    const real = typeof realFrame === 'number' && Number.isFinite(realFrame) ? realFrame : realFrameOf(effect, frameNum);
+    const frame = this.renderMotion(effect, frameNum, real);
 
     // Per Wall can be limited to chosen walls; everything else stays dark
-    const wallIds = effect.scope === 'wall' ? selectedWallIds(effect) : [];
+    // Ignore ids of walls that no longer exist, so a deleted wall can't black out the whole roof
+    const wallIds = effect.scope === 'wall'
+      ? selectedWallIds(effect).filter(id => this.walls.some(w => w.id === id))
+      : [];
     if (wallIds.length > 0) {
       const keep = new Set(wallIds);
       for (const light of this.lights) {
@@ -346,8 +362,7 @@ export class EffectEngine {
     return frame;
   }
 
-  private renderMotion(effect: MotionEffect, frameNum: number): Map<number, RGBW> {
-    this.currentFrame = frameNum;
+  private renderMotion(effect: MotionEffect, frameNum: number, realFrame: number): Map<number, RGBW> {
     const frame = new Map<number, RGBW>();
 
     switch (effect.type) {
@@ -368,17 +383,17 @@ export class EffectEngine {
       case 'converge':
         return this.generateConverge(effect, frameNum);
       case 'twinkle':
-        return this.generateTwinkle(effect, frameNum);
+        return this.generateTwinkle(effect, realFrame);
       case 'fade':
-        return this.generateFade(effect, frameNum);
+        return this.generateFade(effect, realFrame);
       case 'lightning':
-        return this.generateLightning(effect, frameNum);
+        return this.generateLightning(effect, realFrame);
       case 'fireworks':
-        return this.generateFireworks(effect, frameNum);
+        return this.generateFireworks(effect, realFrame);
       case 'fire':
         return this.generateFire(effect, frameNum);
       case 'strobe':
-        return this.generateStrobe(effect, frameNum);
+        return this.generateStrobe(effect, realFrame);
       case 'ripple':
         return this.generateRipple(effect, frameNum);
       case 'breathe':
@@ -401,15 +416,15 @@ export class EffectEngine {
     const frame = new Map<number, RGBW>();
     const color1: RGBW = effect.colors[0] || { r: 255, g: 0, b: 0, w: 0 };
     const color2: RGBW = effect.colors[1] || { r: 0, g: 0, b: 0, w: 255 };
-    const width1 = Math.round(num(effect.params?.width1 || 4, 4, 1, 100));
-    const width2 = Math.round(num(effect.params?.width2 || 4, 4, 1, 100));
+    const width1 = Math.round(num(effect.params?.width1, 4, 1, 100));
+    const width2 = Math.round(num(effect.params?.width2, 4, 1, 100));
     const period = width1 + width2;
     const step = Math.floor(frameNum / 15);
     // Stripe tilt from vertical; the original look is a slope of 2 lights per row (≈ -63.4°)
     const tilt = num(effect.params?.angle, -Math.atan(2) * 180 / Math.PI, -80, 80);
     const slope = Math.tan((tilt * Math.PI) / 180);
 
-    for (let y = 0; y < 3; y++) {
+    for (let y = 0; y < this.rows; y++) {
       for (const row of this.getSegments(y, effect.scope)) {
         for (let j = 0; j < row.length; j++) {
           const light = row[j];
@@ -429,7 +444,7 @@ export class EffectEngine {
     const color2: RGBW = effect.colors[1] || { r: 0, g: 0, b: 0, w: 0 };
     const step = Math.floor(frameNum / 15);
 
-    for (let y = 0; y < 3; y++) {
+    for (let y = 0; y < this.rows; y++) {
       for (const row of this.getSegments(y, effect.scope)) {
         for (let j = 0; j < row.length; j++) {
           const light = row[j];
@@ -447,7 +462,7 @@ export class EffectEngine {
     const frame = new Map<number, RGBW>();
     const headColor: RGBW = effect.colors[0] || { r: 0, g: 0, b: 0, w: 255 };
     const tailColor: RGBW = effect.colors[1] || headColor;
-    const tailLength = Math.round(num(effect.params?.tailLength || 8, 8, 1, 200));
+    const tailLength = Math.round(num(effect.params?.tailLength, 8, 1, 200));
     const reverse = bool(effect.params?.reverse, false);
     const bounce = bool(effect.params?.bounce, true);
     // Let the head travel past the edge until the whole tail has left the frame before looping/turning
@@ -464,28 +479,38 @@ export class EffectEngine {
 
     const dir = angleVector(effect);
 
-    for (let y = 0; y < 3; y++) {
+    for (let y = 0; y < this.rows; y++) {
       for (const row of this.getSegments(y, effect.scope)) {
         // Positions are measured along the angle axis; at 0° that's simply the index along the row
-        const range = axisRange(row.length, dir);
+        const range = axisRange(row.length, this.rows, dir);
         const totalWidth = Math.round(range.max - range.min) + 1;
         // Head steps per pass; with tailExit the head runs tailLength past the edge so the tail fully clears
         const span = totalWidth + (tailExit ? tailLength + size - 1 : 0);
+        // Bounce turns around without repeating a step. With tailExit each pass stops on the last
+        // frame the tail is still visible and the next re-enters at the far edge (the turn happens
+        // off-screen). Without it the leading edge reverses in place: out until it fills the far end,
+        // back until one step short of the near end (all the way, when a pause follows), so neither
+        // end is shown twice. With a 1-light head that's 0..W-1 out, W-2..1 back.
+        const fwdStart = tailExit || pause > 0 ? 0 : Math.min(size - 1, totalWidth - 1);
+        const out = tailExit ? span - 1 : totalWidth - fwdStart;
+        const backStart = tailExit ? totalWidth - 1 : totalWidth - 1 - size;
+        const backEnd = tailExit ? totalWidth - span + 1 : pause > 0 ? 0 : 1;
+        const back = Math.max(0, backStart - backEnd + 1);
 
         let pos: number;
         let movingForward: boolean;
 
-        const local = cycleStep(step, bounce ? span * 2 : span, pause);
+        const local = cycleStep(step, bounce ? Math.max(1, out + back) : span, pause);
         if (local === null) continue; // pausing before the next loop
 
         if (bounce) {
           const raw = local;
-          if (raw >= span) {
+          if (raw >= out) {
             // Coming back: re-enter at the far edge and run past the near edge by the same margin
-            pos = totalWidth - 1 - (raw - span);
+            pos = backStart - (raw - out);
             movingForward = false;
           } else {
-            pos = raw;
+            pos = fwdStart + raw;
             movingForward = true;
           }
         } else {
@@ -526,8 +551,8 @@ export class EffectEngine {
   private generateSparkle(effect: MotionEffect, frameNum: number): Map<number, RGBW> {
     const frame = new Map<number, RGBW>();
     const sparkleColor: RGBW = effect.colors[0] || { r: 0, g: 0, b: 0, w: 255 };
-    const density = num(effect.params?.density || 0.15, 0.15, 0, 1);
-    const fadeSpeed = num(effect.params?.fadeSpeed || 0.3, 0.3, 0.001, 10);
+    const density = num(effect.params?.density, 0.15, 0, 1);
+    const fadeSpeed = num(effect.params?.fadeSpeed, 0.3, 0.001, 10);
 
     // Use deterministic random based on frame for consistent playback
     const seed = frameNum * 12345;
@@ -560,9 +585,9 @@ export class EffectEngine {
     const dir = angleVector(effect);
     const adjust = bool(effect.params?.adjustDefective, false);
 
-    for (let y = 0; y < 3; y++) {
+    for (let y = 0; y < this.rows; y++) {
       for (const row of this.getSegments(y, effect.scope)) {
-        const range = axisRange(row.length, dir);
+        const range = axisRange(row.length, this.rows, dir);
         // One full rainbow across the segment along the angle (at 0° exactly j / row.length)
         const extent = range.max - range.min + 1;
         for (let j = 0; j < row.length; j++) {
@@ -586,12 +611,13 @@ export class EffectEngine {
   private generateWave(effect: MotionEffect, frameNum: number): Map<number, RGBW> {
     const frame = new Map<number, RGBW>();
     const colors = effect.colors.length > 0 ? effect.colors : [{ r: 0, g: 0, b: 0, w: 255 }];
-    const wavelength = num(effect.params?.wavelength || 10, 10, 0.5, 1000);
+    const wavelength = num(effect.params?.wavelength, 10, 0.5, 1000);
     const bounce = bool(effect.params?.bounce, false);
-    const waveHeight = num(effect.params?.waveHeight, 1.0, 0, 2);
+    // Above 1 the troughs would go below zero brightness
+    const waveHeight = num(effect.params?.waveHeight, 1.0, 0, 1);
     const dir = angleVector(effect);
 
-    for (let y = 0; y < 3; y++) {
+    for (let y = 0; y < this.rows; y++) {
       for (const row of this.getSegments(y, effect.scope)) {
         const totalWidth = row.length;
 
@@ -619,12 +645,13 @@ export class EffectEngine {
           if (colors.length === 1) {
             color = colors[0];
           } else {
-            // Map sin phase [0, 2*PI] to color position [0, N]
+            // Map the wave height (trough 0 .. peak 1) onto colors[0] .. colors[N-1], no wrap-around,
+            // so troughs show the first color and peaks the last
             const normalizedPhase = (sinVal * 0.5 + 0.5); // 0..1
-            const colorPos = normalizedPhase * colors.length;
-            const idx = Math.floor(colorPos) % colors.length;
-            const nextIdx = (idx + 1) % colors.length;
-            const frac = colorPos - Math.floor(colorPos);
+            const colorPos = normalizedPhase * (colors.length - 1);
+            const idx = Math.min(Math.floor(colorPos), colors.length - 2);
+            const nextIdx = idx + 1;
+            const frac = colorPos - idx;
             const c1 = colors[idx];
             const c2 = colors[nextIdx];
             color = {
@@ -652,7 +679,7 @@ export class EffectEngine {
   private generateChase(effect: MotionEffect, frameNum: number): Map<number, RGBW> {
     const frame = new Map<number, RGBW>();
     const chaseColor: RGBW = effect.colors[0] || { r: 0, g: 0, b: 0, w: 255 };
-    const groupSize = Math.round(num(effect.params?.groupSize || 3, 3, 1, 1000));
+    const groupSize = Math.round(num(effect.params?.groupSize, 3, 1, 1000));
     const step = Math.floor(frameNum / 4);
     const pause = pauseSteps(effect, 4);
 
@@ -661,7 +688,7 @@ export class EffectEngine {
       frame.set(light.light_id, { r: 0, g: 0, b: 0, w: 0 });
     }
 
-    for (let y = 0; y < 3; y++) {
+    for (let y = 0; y < this.rows; y++) {
       for (const row of this.getSegments(y, effect.scope)) {
         const size = Math.min(groupSize, row.length);
         if (pause === 0) {
@@ -693,7 +720,7 @@ export class EffectEngine {
     const leftColor: RGBW = effect.colors[0] || { r: 0, g: 0, b: 0, w: 255 };
     const rightColor: RGBW = effect.colors[1] || leftColor;
     const meetColor: RGBW | undefined = effect.colors[2];
-    const groupSize = Math.round(num(effect.params?.groupSize || 3, 3, 1, 1000));
+    const groupSize = Math.round(num(effect.params?.groupSize, 3, 1, 1000));
     const tail = Math.round(num(effect.params?.tail, 0, 0, 100));
     const bounce = bool(effect.params?.bounce, false);
     const hold = Math.round(num(effect.params?.hold, 0, 0, 600) * FPS * effect.speed / 4);
@@ -704,13 +731,19 @@ export class EffectEngine {
       frame.set(light.light_id, { ...BLACK });
     }
 
-    for (let y = 0; y < 3; y++) {
+    for (let y = 0; y < this.rows; y++) {
       for (const row of this.getSegments(y, effect.scope)) {
         const len = row.length;
-        // Steps until the two heads reach the middle (they overlap on odd lengths)
-        const travel = Math.ceil(len / 2);
+        // Furthest the heads get: the middle (they overlap on odd lengths)
+        const maxHead = Math.ceil(len / 2) - 1;
+        // Steps until the two heads reach the middle. On 1-2 light segments the ends already touch,
+        // so spend one step apart before the meeting step instead of being "met" forever
+        const travel = Math.max(2, maxHead + 1);
+        // With bounce the outward pass stops one short of the ends when looping straight back in,
+        // so the end position isn't shown twice (with a pause it runs all the way out first)
+        const outward = bounce ? Math.max(0, pause > 0 ? travel - 1 : travel - 2) : 0;
         // Inward pass, optional hold while together, then (with bounce) the outward pass
-        const cycle = travel + hold + (bounce ? travel - 1 : 0);
+        const cycle = travel + hold + outward;
         const local = cycleStep(step, cycle, pause);
         if (local === null) continue; // pausing before the next loop
 
@@ -718,6 +751,7 @@ export class EffectEngine {
         if (local < travel) head = local;
         else if (local < travel + hold) head = travel - 1;
         else head = travel - 2 - (local - travel - hold);
+        head = Math.min(head, maxHead);
         const met = local >= travel - 1 && local < travel + hold;
         const inward = local < travel + hold;
 
@@ -746,8 +780,9 @@ export class EffectEngine {
     return frame;
   }
 
-  // Twinkle - each light slowly fades in and out at random, gentler than Sparkle
-  private generateTwinkle(effect: MotionEffect, frameNum: number): Map<number, RGBW> {
+  // Twinkle - each light slowly fades in and out at random, gentler than Sparkle.
+  // Timed in real frames so "Fade time" stays in seconds whatever the Speed
+  private generateTwinkle(effect: MotionEffect, realFrame: number): Map<number, RGBW> {
     const frame = new Map<number, RGBW>();
     const palette = effect.colors.length > 0 ? effect.colors : [{ r: 0, g: 0, b: 0, w: 255 }];
     const density = num(effect.params?.density, 0.3, 0.02, 1);
@@ -757,7 +792,7 @@ export class EffectEngine {
 
     for (const light of this.lights) {
       const offset = Math.floor(rand(light.light_id, 7) * cycle);
-      const t = frameNum + offset;
+      const t = realFrame + offset;
       const n = Math.floor(t / cycle);
       const local = t - n * cycle;
       if (local < 2 * fade) {
@@ -770,15 +805,15 @@ export class EffectEngine {
     return frame;
   }
 
-  // Color Fade - the whole roof crossfades through the palette
-  private generateFade(effect: MotionEffect, frameNum: number): Map<number, RGBW> {
+  // Color Fade - the whole roof crossfades through the palette (real frames: hold/fade are seconds)
+  private generateFade(effect: MotionEffect, realFrame: number): Map<number, RGBW> {
     const frame = new Map<number, RGBW>();
     const palette = effect.colors.length > 0 ? effect.colors : [{ r: 255, g: 0, b: 0, w: 0 }, { r: 0, g: 0, b: 0, w: 255 }];
     const hold = Math.round(num(effect.params?.holdTime, 3, 0, 600) * FPS);
     const fade = Math.max(1, Math.round(num(effect.params?.fadeTime, 2, 0.1, 600) * FPS));
     const step = hold + fade;
-    const n = Math.floor(frameNum / step);
-    const local = frameNum - n * step;
+    const n = Math.floor(realFrame / step);
+    const local = realFrame - n * step;
     const from = palette[n % palette.length];
     const to = palette[(n + 1) % palette.length];
     const color = local < hold ? from : mixColor(from, to, (local - hold) / fade);
@@ -786,29 +821,30 @@ export class EffectEngine {
     return frame;
   }
 
-  // Lightning - random strikes of a few quick flickers over a base color
-  private generateLightning(effect: MotionEffect, frameNum: number): Map<number, RGBW> {
+  // Lightning - random strikes of a few quick flickers over a base color.
+  // Real frames, so strikes per minute and the flicker timing hold at any Speed
+  private generateLightning(effect: MotionEffect, realFrame: number): Map<number, RGBW> {
     const frame = new Map<number, RGBW>();
     const flash: RGBW = effect.colors[0] || { r: 0, g: 0, b: 0, w: 255 };
     const base: RGBW = effect.colors[1] || BLACK;
     const perMinute = num(effect.params?.frequency, 12, 1, 120);
     const coverage = num(effect.params?.coverage, 0.5, 0.1, 1);
     const slot = Math.max(10, Math.round((60 / perMinute) * FPS));
-    const n = Math.floor(frameNum / slot);
+    const n = Math.floor(realFrame / slot);
 
     for (const light of this.lights) frame.set(light.light_id, { ...base });
 
     // Check this slot and the previous one so strikes near a boundary finish cleanly
     for (const k of [n - 1, n]) {
       const start = k * slot + Math.floor(rand(k, 1) * slot * 0.6);
-      const t = frameNum - start;
+      const t = realFrame - start;
       const flickers = 2 + Math.floor(rand(k, 2) * 3);
       if (t < 0 || t >= flickers * 5) continue;
       const f = Math.floor(t / 5);
       // Each flicker: bright flash that decays; later flickers are dimmer
       const level = (1 - (t % 5) / 5) * (0.5 + 0.5 * rand(k, 3, f)) * (f === 0 ? 1 : 0.8);
       const center = rand(k, 4);
-      for (let y = 0; y < 3; y++) {
+      for (let y = 0; y < this.rows; y++) {
         for (const row of this.getSegments(y, effect.scope)) {
           const len = row.length;
           const width = Math.max(1, Math.round(len * coverage));
@@ -822,8 +858,8 @@ export class EffectEngine {
     return frame;
   }
 
-  // Fireworks - bursts that expand from a random point and fade out
-  private generateFireworks(effect: MotionEffect, frameNum: number): Map<number, RGBW> {
+  // Fireworks - bursts that expand from a random point and fade out (real frames: times are seconds)
+  private generateFireworks(effect: MotionEffect, realFrame: number): Map<number, RGBW> {
     const frame = new Map<number, RGBW>();
     const palette = effect.colors.length > 0 ? effect.colors : [{ r: 255, g: 0, b: 0, w: 0 }, { r: 0, g: 0, b: 0, w: 255 }];
     const interval = Math.max(6, Math.round(num(effect.params?.interval, 1.5, 0.2, 30) * FPS));
@@ -832,16 +868,16 @@ export class EffectEngine {
 
     for (const light of this.lights) frame.set(light.light_id, { ...BLACK });
 
-    const n = Math.floor(frameNum / interval);
+    const n = Math.floor(realFrame / interval);
     const overlap = Math.ceil(life / interval);
-    for (let y = 0; y < 3; y++) {
+    for (let y = 0; y < this.rows; y++) {
       for (const row of this.getSegments(y, effect.scope)) {
         const len = row.length;
         for (let k = n - overlap; k <= n; k++) {
-          const t = frameNum - (k * interval + Math.floor(rand(k, 1) * interval * 0.5));
+          const t = realFrame - (k * interval + Math.floor(rand(k, 1) * interval * 0.5));
           if (t < 0 || t >= life) continue;
           const x0 = rand(k, 2) * (len - 1);
-          const y0 = rand(k, 3) * 2;
+          const y0 = rand(k, 3) * (this.rows - 1);
           const color = palette[Math.floor(rand(k, 4) * palette.length)];
           const p = t / life;
           const radius = maxRadius * Math.sqrt(p);
@@ -871,7 +907,8 @@ export class EffectEngine {
       // Smoothly interpolated noise per light
       const a = rand(light.light_id, step), b = rand(light.light_id, step + 1);
       const noise = a + (b - a) * frac;
-      const rowHeat = [1, 0.75, 0.5][light.matrix_y] ?? 0.5;
+      // Bottom row full heat, fading to half at the top row (1, 0.75, 0.5 on a 3-row roof)
+      const rowHeat = this.rows > 1 ? 1 - 0.5 * Math.min(1, light.matrix_y / (this.rows - 1)) : 1;
       const heat = Math.max(0, Math.min(1, rowHeat * intensity * (0.55 + 0.6 * noise)));
       let c: RGBW;
       if (heat < 0.4) c = { r: Math.round(255 * (heat / 0.4)), g: 0, b: 0, w: 0 };
@@ -882,15 +919,19 @@ export class EffectEngine {
     return frame;
   }
 
-  // Strobe - fast on/off flashing
-  private generateStrobe(effect: MotionEffect, frameNum: number): Map<number, RGBW> {
+  // Strobe - fast on/off flashing. Real frames, so the rate is flashes per real second at any Speed
+  private generateStrobe(effect: MotionEffect, realFrame: number): Map<number, RGBW> {
     const frame = new Map<number, RGBW>();
     const palette = effect.colors.length > 0 ? effect.colors : [{ r: 0, g: 0, b: 0, w: 255 }];
+    // 15/s is the most 30 FPS can show (one frame on, one off)
     const rate = num(effect.params?.rate, 4, 0.5, 15);
     const duty = num(effect.params?.duty, 0.3, 0.05, 0.95);
     const period = Math.max(2, Math.round(FPS / rate));
-    const n = Math.floor(frameNum / period);
-    const on = frameNum - n * period < Math.max(1, Math.round(period * duty));
+    // At least one frame on and one frame off per flash, or a high rate/duty never goes dark
+    const onFrames = Math.min(period - 1, Math.max(1, Math.round(period * duty)));
+    const f = Math.floor(realFrame);
+    const n = Math.floor(f / period);
+    const on = f - n * period < onFrames;
     // Cycle through the palette, one color per flash
     const color = palette[n % palette.length];
     for (const light of this.lights) frame.set(light.light_id, on ? { ...color } : { ...BLACK });
@@ -904,13 +945,15 @@ export class EffectEngine {
     const base: RGBW = effect.colors[1] || BLACK;
     const origin = num(effect.params?.origin, 50, 0, 100) / 100;
     const spacing = num(effect.params?.spacing, 8, 2, 64);
-    const width = num(effect.params?.width, 1.5, 0.5, 10);
+    // Wider than half the spacing and neighbouring rings merge into a solid band
+    const width = Math.min(num(effect.params?.width, 1.5, 0.5, 10), spacing / 2);
     const travel = frameNum / 6; // lights per step outward
-    for (let y = 0; y < 3; y++) {
+    const midRow = (this.rows - 1) / 2;
+    for (let y = 0; y < this.rows; y++) {
       for (const row of this.getSegments(y, effect.scope)) {
         const x0 = origin * (row.length - 1);
         for (let j = 0; j < row.length; j++) {
-          const d = Math.hypot(j - x0, (y - 1) * 0.8);
+          const d = Math.hypot(j - x0, (y - midRow) * 0.8);
           // Distance from the nearest ring (rings sit every `spacing` lights, moving outward)
           const phase = (((d - travel) % spacing) + spacing) % spacing;
           const dist = Math.min(phase, spacing - phase);
@@ -926,7 +969,8 @@ export class EffectEngine {
   private generateBreathe(effect: MotionEffect, frameNum: number): Map<number, RGBW> {
     const frame = new Map<number, RGBW>();
     const breatheColor: RGBW = effect.colors[0] || { r: 0, g: 0, b: 0, w: 255 };
-    const speed = num(effect.params?.speed || 0.05, 0.05, 0.0001, 10);
+    // params.speed is the breath rate (radians per frame), separate from the design's Speed
+    const speed = num(effect.params?.speed, 0.05, 0.001, 10);
 
     let brightness: number;
     const pause = pauseSteps(effect, 1);
@@ -970,7 +1014,7 @@ export class EffectEngine {
     const bitmapWidth = bitmap[0]?.length || 0;
     if (bitmapWidth === 0) return frame;
 
-    for (let y = 0; y < 3; y++) {
+    for (let y = 0; y < this.rows; y++) {
       for (const row of this.getSegments(y, effect.scope)) {
         const local = cycleStep(step, bitmapWidth + row.length, pause);
         if (local === null) continue; // pausing after the text has scrolled off
@@ -998,7 +1042,7 @@ export class EffectEngine {
         rows[2].push(false);
       }
       const glyph = PIXEL_FONT[text[i]] || PIXEL_FONT[' '];
-      for (let y = 0; y < 3; y++) {
+      for (let y = 0; y < glyph.length; y++) {
         for (let x = 0; x < glyph[y].length; x++) {
           rows[y].push(glyph[y][x] === 1);
         }
