@@ -98,6 +98,10 @@ function parsePreviewItems(raw: unknown): { items: TimelineItemRow[] } | { error
     if (typeof duration !== 'number' || !Number.isFinite(duration) || duration < 1 || duration > MAX_DURATION_SECONDS) {
       return { error: `${where}: duration must be a number of seconds from 1 to ${MAX_DURATION_SECONDS}` };
     }
+    const transition = item.transition ?? 'cut';
+    if (transition !== 'cut' && transition !== 'fade' && transition !== 'fade_black') {
+      return { error: `${where}: transition must be "cut", "fade" or "fade_black"` };
+    }
     items.push({
       id: `item${i}`,
       design_id: designId as string | null,
@@ -105,6 +109,7 @@ function parsePreviewItems(raw: unknown): { items: TimelineItemRow[] } | { error
       duration,
       repeat_mode: repeatMode,
       repeat_count: repeatCount as number,
+      transition,
     });
   }
   return { items };

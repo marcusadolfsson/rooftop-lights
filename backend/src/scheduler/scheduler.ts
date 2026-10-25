@@ -8,6 +8,8 @@ import { logRateLimited } from '../utils/rateLimitedLog.js';
 import {
   buildPlaylistTimeline, locate, nodeFrames, shuffleNode, timelineStartIndex,
   PlaylistTimeline, TimelineItemRow, TimelineNode, TimelineSource,
+  locateBoundary,
+  TRANSITION_FRAMES,
 } from '../services/playlistTimeline.js';
 
 function maskDefectiveChannels(light: Light, color: RGBW): RGBW {
@@ -79,6 +81,13 @@ const BLANK: Map<number, RGBW> = new Map();
  * through before the next top-level item; each design restarts its effect at frame 0, so
  * "X times" lines up with complete cycles.
  */
+/** What a playlist shows this frame; during a fade, `blend` is the next design and how far in. */
+interface PlaylistStep {
+  designId: string;
+  frame: number;
+  blend?: { designId: string; frame: number; t: number; mode: 'fade' | 'fade_black' };
+}
+
 class PlaylistPlayer {
   private signature = '';
   private index = 0;
@@ -86,6 +95,8 @@ class PlaylistPlayer {
   private frame = 0;
   private last: { designId: string; frame: number } | null = null;
   private sourceIndexes: number[] = [];
+  // Random mode: the next item, picked early when a fade into it starts
+  private pendingIndex: number | null = null;
 
   reset(): void {
     this.signature = '';
@@ -97,7 +108,7 @@ class PlaylistPlayer {
    * playlist's own items, used by the editor's per-item Play) is where playback starts; after
    * that it continues and loops as usual.
    */
-  step(playlistId: string, timeline: PlaylistTimeline, startAt?: number): { designId: string; frame: number } | null {
+  step(playlistId: string, timeline: PlaylistTimeline, startAt?: number): PlaylistStep | null {
     const items = timeline.items;
     if (items.length === 0) {
       this.reset();
@@ -117,7 +128,10 @@ class PlaylistPlayer {
 
     if (!this.current || this.frame >= nodeFrames(this.current)) {
       if (timeline.playMode === 'random') {
-        if (items.length > 1) {
+        if (this.pendingIndex !== null) {
+          // Already picked while fading into it
+          this.index = this.pendingIndex % items.length;
+        } else if (items.length > 1) {
           // Pick a different item than the one that just finished
           const next = Math.floor(Math.random() * (items.length - 1));
           this.index = next >= this.index ? next + 1 : next;
@@ -128,9 +142,38 @@ class PlaylistPlayer {
       this.startItem(items);
     }
 
-    const at = this.current ? locate(this.current, this.frame++) : null;
+    const frame = this.frame++;
+    const at = this.current ? locateBoundary(this.current, frame) : null;
     this.last = at ? { designId: at.leaf.designId, frame: at.frame } : null;
-    return this.last;
+    if (!at || !this.current || at.transition === 'cut') return this.last;
+
+    // Fade transitions run over the last TRANSITION_FRAMES of the item (at most half of it) into
+    // whatever plays next: the next leaf inside this item, or the next item (the first one again
+    // when the playlist loops). The next design is shown at its first frame during the fade.
+    const fade = Math.max(1, Math.min(TRANSITION_FRAMES, Math.floor(at.leaf.frames / 2)));
+    if (at.remaining > fade) return this.last;
+    let next: { designId: string; frame: number } | null = null;
+    if (!at.endsNode) {
+      const n = locate(this.current, frame + at.remaining);
+      next = n ? { designId: n.leaf.designId, frame: 0 } : null;
+    } else {
+      const n = locate(items[this.peekNextIndex(items.length, timeline.playMode)], 0);
+      next = n ? { designId: n.leaf.designId, frame: 0 } : null;
+    }
+    if (!next) return this.last;
+    // 0 at the start of the fade, 1 on its last frame
+    const t = (fade - at.remaining + 1) / fade;
+    return { ...this.last!, blend: { ...next, t, mode: at.transition } };
+  }
+
+  /** Index of the item that will play after the current one (chosen now in random mode, then kept). */
+  private peekNextIndex(count: number, playMode: 'sequence' | 'random'): number {
+    if (playMode !== 'random') return (this.index + 1) % count;
+    if (this.pendingIndex === null) {
+      const next = Math.floor(Math.random() * Math.max(1, count - 1));
+      this.pendingIndex = count > 1 && next >= this.index ? next + 1 : next;
+    }
+    return this.pendingIndex;
   }
 
   /** Where playback is: top-level item index, frames into it, and the design showing. */
@@ -146,6 +189,7 @@ class PlaylistPlayer {
   }
 
   private startItem(items: TimelineNode[]): void {
+    this.pendingIndex = null;
     // A random child playlist gets a fresh order each time its item starts
     this.current = shuffleNode(items[this.index % items.length]);
     this.frame = 0;
@@ -328,7 +372,7 @@ export class Scheduler {
         design: db.prepare('SELECT id, type, data, updated_at FROM designs WHERE id = ?'),
         playlist: db.prepare('SELECT id, play_mode FROM playlists WHERE id = ?'),
         items: db.prepare(`
-          SELECT id, design_id, child_playlist_id, duration, repeat_mode, repeat_count
+          SELECT id, design_id, child_playlist_id, duration, repeat_mode, repeat_count, transition
           FROM playlist_items WHERE playlist_id = ? ORDER BY position
         `),
       };
@@ -533,7 +577,28 @@ export class Scheduler {
     const design = this.loadDesign(current.designId);
     if (!design || design.type === 'playlist') return BLANK;
 
-    return this.renderDesignAt(design.type, design.data, current.frame);
+    const frame = this.renderDesignAt(design.type, design.data, current.frame);
+    const blend = current.blend;
+    if (!blend) return frame;
+    const nextDesign = this.loadDesign(blend.designId);
+    const next = nextDesign && nextDesign.type !== 'playlist' ? this.renderDesignAt(nextDesign.type, nextDesign.data, blend.frame) : BLANK;
+    const out = new Map<number, RGBW>();
+    const ids = new Set([...frame.keys(), ...next.keys()]);
+    for (const id of ids) {
+      const a = frame.get(id) ?? { r: 0, g: 0, b: 0, w: 0 };
+      const b = next.get(id) ?? { r: 0, g: 0, b: 0, w: 0 };
+      // Crossfade, or fade out to black over the first half and the next design in over the second
+      const [ka, kb] = blend.mode === 'fade'
+        ? [1 - blend.t, blend.t]
+        : blend.t < 0.5 ? [1 - blend.t * 2, 0] : [0, blend.t * 2 - 1];
+      out.set(id, {
+        r: Math.round(a.r * ka + b.r * kb),
+        g: Math.round(a.g * ka + b.g * kb),
+        b: Math.round(a.b * ka + b.b * kb),
+        w: Math.round(a.w * ka + b.w * kb),
+      });
+    }
+    return out;
   }
 
   private renderDesign(type: string, data: unknown, source: RenderSource): Map<number, RGBW> {

@@ -10,6 +10,14 @@ export const MAX_PLAYLIST_DEPTH = 8;
 const MIN_ITEM_FRAMES = TIMELINE_FPS;
 
 export type RepeatMode = 'seconds' | 'times';
+// How an item hands over to the next one: hard cut, crossfade, or fade out to black then in
+export type Transition = 'cut' | 'fade' | 'fade_black';
+// Length of a fade transition (shortened on items too short for it)
+export const TRANSITION_FRAMES = TIMELINE_FPS;
+
+export function normalizeTransition(v: unknown): Transition {
+  return v === 'fade' || v === 'fade_black' ? v : 'cut';
+}
 
 export interface TimelineItemRow {
   id: string;
@@ -18,6 +26,7 @@ export interface TimelineItemRow {
   duration: number;
   repeat_mode: string;
   repeat_count: number;
+  transition?: string | null;
 }
 
 export interface TimelinePlaylist {
@@ -38,6 +47,8 @@ export interface TimelineLeaf {
   frames: number;
   // Item ids from the top playlist down, unique per position in the tree
   key: string;
+  // How this item hands over to whatever plays next
+  transition: Transition;
 }
 
 /** Children played in order `repeat` times, or (when `limit` is set) looped until `limit` frames. */
@@ -51,6 +62,8 @@ export interface TimelineGroup {
   // Child playlist in random mode: children are shuffled each time it starts
   shuffle: boolean;
   key: string;
+  // How this item hands over to whatever plays next, once it has finished
+  transition: Transition;
 }
 
 export type TimelineNode = TimelineLeaf | TimelineGroup;
@@ -94,7 +107,7 @@ export function buildTimelineItem(item: TimelineItemRow, src: TimelineSource, st
     if (cycle === undefined) return null;
     // "times" needs a natural cycle; without one the item falls back to its duration
     const frames = times && cycle !== null ? Math.max(1, cycle) * repeatCount(item.repeat_count) : secondsFrames(item.duration);
-    return { kind: 'leaf', designId: item.design_id, frames, key };
+    return { kind: 'leaf', designId: item.design_id, frames, key, transition: normalizeTransition(item.transition) };
   }
   const childId = item.child_playlist_id;
   if (!childId || stack.includes(childId) || stack.length >= MAX_PLAYLIST_DEPTH) return null;
@@ -111,6 +124,7 @@ export function buildTimelineItem(item: TimelineItemRow, src: TimelineSource, st
     limit: times ? null : secondsFrames(item.duration),
     shuffle: child.play_mode === 'random',
     key,
+    transition: normalizeTransition(item.transition),
   };
 }
 
@@ -126,8 +140,8 @@ function buildItems(items: TimelineItemRow[], src: TimelineSource, stack: string
 }
 
 function signatureOf(node: TimelineNode): string {
-  if (node.kind === 'leaf') return `${node.key}=${node.designId}:${node.frames}`;
-  return `${node.key}[${node.repeat}:${node.limit ?? ''}:${node.shuffle ? 'r' : 's'}|${node.children.map(signatureOf).join(',')}]`;
+  if (node.kind === 'leaf') return `${node.key}=${node.designId}:${node.frames}:${node.transition}`;
+  return `${node.key}[${node.repeat}:${node.limit ?? ''}:${node.shuffle ? 'r' : 's'}:${node.transition}|${node.children.map(signatureOf).join(',')}]`;
 }
 
 export function buildPlaylistTimeline(playlistId: string, src: TimelineSource): PlaylistTimeline | null {
@@ -174,6 +188,25 @@ export function locate(node: TimelineNode, frame: number): { leaf: TimelineLeaf;
     f -= len;
   }
   return null;
+}
+
+/**
+ * Where `frame` falls in `node`: the leaf and frame within it, frames left until that leaf hands
+ * over, and the transition used there (the leaf's own, or `node`'s when the leaf is the last thing
+ * `node` plays).
+ */
+export function locateBoundary(node: TimelineNode, frame: number): { leaf: TimelineLeaf; frame: number; remaining: number; transition: Transition; endsNode: boolean } | null {
+  const at = locate(node, frame);
+  if (!at) return null;
+  const toNodeEnd = nodeFrames(node) - frame;
+  const toLeafEnd = at.leaf.frames - at.frame;
+  const endsNode = toNodeEnd <= toLeafEnd;
+  return {
+    ...at,
+    remaining: Math.min(toLeafEnd, toNodeEnd),
+    transition: endsNode ? node.transition : at.leaf.transition,
+    endsNode,
+  };
 }
 
 /** Flat list of the leaves `node` plays, in order (for tests and debugging); stops after `max`. */
