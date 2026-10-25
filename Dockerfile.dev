@@ -22,9 +22,9 @@ RUN apk add --no-cache curl
 EXPOSE 3030
 EXPOSE 6454/udp
 
-# Health check: ping Vite dev server every 30s
+# Health check: ping backend /health every 30s (backend on port 3031 in dev)
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
-  CMD curl -f http://localhost:3030/ || exit 1
+  CMD curl -f http://localhost:3031/health || exit 1
 
 # Run both backend and frontend with hot reload
 # Backend on port 3031 (internal), Frontend/Vite on port 3030 (public)

@@ -10,6 +10,10 @@ export default defineConfig({
     port: 5173,
     allowedHosts: ['rooftop.onestpete.com'],
     proxy: {
+      '/health': {
+        target: `http://localhost:${apiPort}`,
+        changeOrigin: true,
+      },
       '/api': {
         target: `http://localhost:${apiPort}`,
         changeOrigin: true,

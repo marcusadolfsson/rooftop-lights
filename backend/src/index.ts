@@ -35,9 +35,23 @@ app.use('/api/schedules', schedulesRoutes);
 app.use('/api/artnet', artnetRoutes);
 app.use('/api/preview', previewRoutes);
 
-// Health check
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+// Health check (unauthenticated, fast, checks DB)
+const startTime = Date.now();
+app.get('/health', (req, res) => {
+  try {
+    const db = getDatabase();
+    db.prepare('SELECT 1').get();
+  } catch {
+    return res.status(503).json({ status: 'unhealthy' });
+  }
+
+  const uptimeMs = Date.now() - startTime;
+  const days = Math.floor(uptimeMs / 86400000);
+  const hours = Math.floor((uptimeMs % 86400000) / 3600000);
+  const minutes = Math.floor((uptimeMs % 3600000) / 60000);
+  const uptime = `${days}d ${hours}h ${minutes}m`;
+
+  res.json({ status: 'healthy', version: '1.0.0', uptime });
 });
 
 // Serve static files from the public directory (built frontend)

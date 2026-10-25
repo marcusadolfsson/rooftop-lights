@@ -38,9 +38,9 @@ RUN apk add --no-cache curl
 EXPOSE 3030
 EXPOSE 6454/udp
 
-# Health check: ping API every 30s, restart if 3 consecutive failures
+# Health check: ping /health every 30s, restart if 3 consecutive failures
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD curl -f http://localhost:3030/api/artnet/config || exit 1
+  CMD curl -f http://localhost:3030/health || exit 1
 
 # Start the application
 CMD ["node", "dist/index.js"]
