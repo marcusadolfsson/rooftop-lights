@@ -574,9 +574,14 @@ export class EffectEngine {
       // Sub-pixel blending: render the step before and after this moment and crossfade between
       // them, so a moving edge glides across two lights instead of jumping a whole light
       const a = Math.floor(frameNum / stepFrames) * stepFrames;
-      const t = (frameNum - a) / stepFrames;
+      // Don't blend across the end of a cycle: the next step is the start of a new loop, and fading
+      // into it shows the restart early (e.g. a scene item set to play once looks like it repeats)
+      const cycle = this.cycleFrames(effect);
+      const scaledCycle = cycle ? cycle * effect.speed : 0;
+      const wraps = scaledCycle > 0 && Math.abs(((a + stepFrames) % scaledCycle + scaledCycle) % scaledCycle) < 1e-6;
+      const t = wraps ? 0 : (frameNum - a) / stepFrames;
       const from = this.renderMotion(effect, a, real);
-      const to = this.renderMotion(effect, a + stepFrames, real);
+      const to = wraps ? from : this.renderMotion(effect, a + stepFrames, real);
       frame = new Map();
       for (const [id, c] of from) frame.set(id, mixColor(c, to.get(id) ?? BLACK, t));
     } else {
