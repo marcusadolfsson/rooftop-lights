@@ -281,7 +281,7 @@ router.get('/effects/types', (req: Request, res: Response) => {
     },
     {
       type: 'comet',
-      name: 'Comet',
+      name: 'Comet & Chase',
       description: 'A bright head with a fading tail; set Tail length to 0 for a plain chase',
       defaultColors: [
         { r: 0, g: 0, b: 0, w: 255 },
