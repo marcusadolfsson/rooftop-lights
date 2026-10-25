@@ -51,6 +51,13 @@ export default function StaticPanel({
         setCurrentColor={setCurrentColor}
         hasRGBW={hasRGBW}
         toolbar={
+          <>
+          {selectedDesign && (
+            <h3 className="card-title static-design-title">
+              {selectedDesign.name}
+              <span className="effect-pill">Static</span>
+            </h3>
+          )}
           <div className="btn-group" style={{ marginBottom: '0.5rem' }}>
             {selectedDesign ? (
               <button className="btn btn-primary btn-sm" onClick={editor.startNew}>New</button>
@@ -64,6 +71,7 @@ export default function StaticPanel({
             {/* Keeps the row's height while it's empty, so the first paint stroke doesn't push the grid down mid-drag */}
             {!selectedDesign && !hasChanges && <button type="button" className="btn btn-sm btn-placeholder" aria-hidden="true" tabIndex={-1} disabled>Clear</button>}
           </div>
+          </>
         }
       />
     </div>

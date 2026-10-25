@@ -152,7 +152,13 @@ export function MotionDesignEditor({
         )}
         {effect && (
           <div className="card">
-            <div className="card-header"><h3 className="card-title">{effect.name}</h3></div>
+            <div className="card-header">
+              {/* A saved design shows its own name, with the effect it uses as a pill */}
+              <h3 className="card-title">
+                {selectedDesign ? selectedDesign.name : effect.name}
+                {selectedDesign && <span className="effect-pill">{effect.name}</span>}
+              </h3>
+            </div>
             {isAi && params.prompt && (
               <div style={{ marginBottom: '0.75rem', padding: '0.5rem 0.75rem', background: 'var(--bg-tertiary)', borderRadius: '4px', fontSize: '0.8rem', color: 'var(--text-secondary)', display: 'flex', alignItems: 'flex-start', gap: '0.5rem' }}>
                 <span style={{ fontStyle: 'italic', flex: 1 }}>{params.prompt as string}</span>
