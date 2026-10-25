@@ -112,6 +112,39 @@ function cycleStep(step: number, cycle: number, pause: number): number | null {
   return m < cycle ? m : null;
 }
 
+/**
+ * Rainbow color for a light with dead channels: instead of a hue it can't show (which would go
+ * dark or jump), cycle through what it *can* make as the hue moves, so every light keeps flowing.
+ *  - 2 working colors: blend between them (e.g. red <-> yellow <-> green)
+ *  - 1 working color + W: blend between that color and white
+ *  - 1 working color only: hold that color
+ *  - only W: white
+ */
+function rainbowWithDeadChannels(hue: number, defective: string): RGBW {
+  const dead = new Set(defective.split(','));
+  const working = (['r', 'g', 'b'] as const).filter(ch => !dead.has(ch));
+  const hasW = !dead.has('w');
+  const out: RGBW = { r: 0, g: 0, b: 0, w: 0 };
+  // 0 -> 1 -> 0 over one hue cycle
+  const t = 0.5 - 0.5 * Math.cos((hue * Math.PI) / 180);
+  if (working.length === 3) {
+    // Nothing relevant is dead (only W): plain rainbow
+    const h = hue / 60, x = 1 - Math.abs((h % 2) - 1);
+    const [r, g, b] = h < 1 ? [1, x, 0] : h < 2 ? [x, 1, 0] : h < 3 ? [0, 1, x] : h < 4 ? [0, x, 1] : h < 5 ? [x, 0, 1] : [1, 0, x];
+    return { r: Math.round(r * 255), g: Math.round(g * 255), b: Math.round(b * 255), w: 0 };
+  }
+  if (working.length === 2) {
+    out[working[0]] = Math.round(255 * Math.min(1, 2 * (1 - t)));
+    out[working[1]] = Math.round(255 * Math.min(1, 2 * t));
+  } else if (working.length === 1) {
+    out[working[0]] = Math.round(255 * (hasW ? Math.min(1, 2 * (1 - t)) : 1));
+    if (hasW) out.w = Math.round(255 * Math.min(1, 2 * t));
+  } else if (hasW) {
+    out.w = 255;
+  }
+  return out;
+}
+
 /** Wall ids a Per Wall effect is limited to (empty = all walls). */
 function selectedWallIds(effect: MotionEffect): string[] {
   const ids = effect.params?.wallIds;
@@ -494,6 +527,7 @@ export class EffectEngine {
   private generateRainbow(effect: MotionEffect, frameNum: number): Map<number, RGBW> {
     const frame = new Map<number, RGBW>();
     const dir = angleVector(effect);
+    const adjust = bool(effect.params?.adjustDefective, false);
 
     for (let y = 0; y < 3; y++) {
       for (const row of this.getSegments(y, effect.scope)) {
@@ -504,8 +538,12 @@ export class EffectEngine {
           const light = row[j];
           const u = j * dir.cos + y * dir.sin - range.min;
           const hue = (((u / extent) * 360 + frameNum * 1) % 360 + 360) % 360;
-          const rgb = this.hslToRgb(hue, 100, 50);
-          frame.set(light.light_id, { ...rgb, w: 0 });
+          if (adjust && light.defective_channels) {
+            frame.set(light.light_id, rainbowWithDeadChannels(hue, light.defective_channels));
+          } else {
+            const rgb = this.hslToRgb(hue, 100, 50);
+            frame.set(light.light_id, { ...rgb, w: 0 });
+          }
         }
       }
     }

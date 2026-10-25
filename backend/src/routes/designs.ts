@@ -313,6 +313,7 @@ router.get('/effects/types', (req: Request, res: Response) => {
       description: 'Smooth rainbow colors flowing across the display',
       defaultColors: [],
       params: {
+        adjustDefective: { type: 'boolean', default: false, label: 'Adjust for defective lights' },
         angle: { type: 'number', default: 0, min: -180, max: 180, step: 15, label: 'Angle', unit: '°' },
       },
     },
