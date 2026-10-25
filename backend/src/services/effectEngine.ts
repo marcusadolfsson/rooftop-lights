@@ -244,6 +244,9 @@ export const STEP_FRAMES: Record<string, number> = {
   text: 6,
 };
 
+/** Stepped effects whose last step leads straight into the first (no restart to hide). */
+const SEAMLESS_LOOP = new Set(['candy_cane', 'checkerboard']);
+
 /** Wall ids a Per Wall effect is limited to (empty = all walls). */
 function selectedWallIds(effect: MotionEffect): string[] {
   const ids = effect.params?.wallIds;
@@ -635,7 +638,8 @@ export class EffectEngine {
       const a = Math.floor(frameNum / stepFrames) * stepFrames;
       // Don't blend across the end of a cycle: the next step is the start of a new loop, and fading
       // into it shows the restart early (e.g. a scene item set to play once looks like it repeats)
-      const cycle = this.cycleFrames(effect);
+      // Candy Cane and Checkerboard scroll seamlessly through their loop point, so they keep blending
+      const cycle = SEAMLESS_LOOP.has(effect.type) ? null : this.cycleFrames(effect);
       const scaledCycle = cycle ? cycle * effect.speed : 0;
       const wraps = scaledCycle > 0 && Math.abs(((a + stepFrames) % scaledCycle + scaledCycle) % scaledCycle) < 1e-6;
       const t = wraps ? 0 : (frameNum - a) / stepFrames;
