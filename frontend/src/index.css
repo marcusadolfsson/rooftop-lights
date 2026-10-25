@@ -2769,3 +2769,21 @@ body {
 .browser-mic.compact .browser-mic-label {
   flex: 1 1 0;
 }
+
+/* Saved lists: keep the row actions inside the narrow sidebar (long folder headers and names
+   used to push the table wider than its card, clipping the icons) */
+.saved-designs-table {
+  table-layout: fixed;
+}
+
+.saved-designs-table tr:not(.folder-row) td:last-child:not(:first-child) {
+  width: 4.4rem;
+}
+
+.saved-designs-table .saved-item-button {
+  overflow-wrap: break-word;
+}
+
+.folder-row-inner {
+  min-width: 0;
+}
