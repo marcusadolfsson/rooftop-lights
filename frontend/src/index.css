@@ -1842,3 +1842,18 @@ body {
     font-size: 16px; /* iOS zooms into anything smaller on focus */
   }
 }
+
+.fx-color-label {
+  max-width: 56px;
+  font-size: 0.6875rem;
+  color: var(--text-secondary);
+  text-align: center;
+  line-height: 1.2;
+}
+
+.fx-color-hint {
+  margin: -0.25rem 0 0.5rem;
+  max-width: 320px;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}

@@ -111,10 +111,14 @@ export default function MotionPanel({
               {effect.defaultColors.length > 0 && (
                 <div className="form-group" style={{ marginBottom: 0 }}>
                   <span className="form-label" id="motion-colors-label">Colors (click to edit)</span>
+                  {effect.colorHint && <p className="fx-color-hint">{effect.colorHint}</p>}
                   <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }} role="group" aria-labelledby="motion-colors-label">
                     {colors.map((color, idx) => {
                       const selected = selectedColorIdx === idx;
-                      const label = isAi ? (idx === 0 ? 'Base Color' : `Pattern Color ${idx}`) : `Color ${idx + 1}`;
+                      const named = effect.colorLabels?.[Math.min(idx, effect.colorLabels.length - 1)];
+                      // AI palettes repeat "Pattern" for every extra color; palettes without names are numbered
+                      const short = named ?? `${idx + 1}`;
+                      const label = named ? `${named} color` : `Color ${idx + 1}`;
                       return (
                         // Palette entries are positional, so the index is their identity
                         <div key={idx} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px' }}>
@@ -126,7 +130,7 @@ export default function MotionPanel({
                             aria-label={`Edit ${label}`}
                             aria-pressed={selected}
                           />
-                          {isAi && <span style={{ fontSize: '0.6rem', color: 'var(--text-secondary)' }}>{idx === 0 ? 'Base' : 'Pattern'}</span>}
+                          <span className="fx-color-label">{short}</span>
                         </div>
                       );
                     })}

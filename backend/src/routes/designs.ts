@@ -453,7 +453,28 @@ router.get('/effects/types', (req: Request, res: Response) => {
     },
   ];
 
-  res.json(effectTypes);
+  // What each color swatch does, shown under the swatches in the editor. Effects whose colors are
+  // a palette (any number, used in turn or at random) get a hint instead of per-swatch labels.
+  const colorInfo: Record<string, { colorLabels?: string[]; colorHint?: string }> = {
+    ai: { colorLabels: ['Base', 'Pattern'] },
+    candy_cane: { colorLabels: ['Stripe 1', 'Stripe 2'] },
+    checkerboard: { colorLabels: ['Square A', 'Square B'] },
+    comet: { colorLabels: ['Head', 'Tail'], colorHint: 'The tail fades from the head color toward the tail color' },
+    sparkle: { colorLabels: ['Sparkle'] },
+    wave: { colorLabels: ['Low', 'High'], colorHint: 'The wave blends between these from its low points to its peaks' },
+    chase: { colorLabels: ['Chaser'] },
+    converge: { colorLabels: ['Left', 'Right', 'Meet'], colorHint: 'Meet is shown while the two groups are together in the middle' },
+    breathe: { colorLabels: ['Glow'] },
+    text: { colorLabels: ['Text'] },
+    twinkle: { colorHint: 'Palette: each twinkle picks one of these colors at random' },
+    fade: { colorHint: 'Palette: the roof fades through these colors in order, then loops' },
+    lightning: { colorLabels: ['Flash', 'Background'] },
+    fireworks: { colorHint: 'Palette: each burst picks one of these colors at random' },
+    strobe: { colorHint: 'Palette: each flash uses the next color in order' },
+    ripple: { colorLabels: ['Rings', 'Background'] },
+  };
+
+  res.json(effectTypes.map(fx => ({ ...fx, ...colorInfo[fx.type] })));
 });
 
 export default router;

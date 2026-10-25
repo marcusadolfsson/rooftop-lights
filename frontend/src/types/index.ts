@@ -65,6 +65,9 @@ export interface EffectType {
   description: string;
   defaultColors: RGBW[];
   params: Record<string, EffectParam>;
+  // Per-swatch names (e.g. Head, Tail), or a hint when the colors are a palette
+  colorLabels?: string[];
+  colorHint?: string;
 }
 
 export interface EffectParam {
