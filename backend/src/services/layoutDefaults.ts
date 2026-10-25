@@ -98,8 +98,8 @@ export function applyLayoutDefaults<T extends EffectTypeDef>(types: T[]): T[] {
   const sized: Record<string, Record<string, unknown>> = {
     // ~8 lights per wave, picked so a whole number of waves fits around the strip
     wave: { wavelength: nearestDivisor(s.totalWidth, 8, 6, 12), depth: 0.5 },
-    // Curve swings from the bottom row to the top row
-    sine: { wavelength: nearestDivisor(s.totalWidth, 8, 6, 12), height: (s.rows - 1) / 2 },
+    // Curve runs from the bottom row to the top row
+    sine: { wavelength: nearestDivisor(s.totalWidth, 8, 6, 12), span: s.rows },
     // Stripes whose pair repeats evenly around the strip
     candy_cane: (() => {
       const w = nearestDivisor(s.totalWidth, 8, 4, 12) / 2;

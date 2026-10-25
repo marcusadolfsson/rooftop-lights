@@ -911,8 +911,13 @@ export class EffectEngine {
     const background: RGBW = effect.colors[1] || BLACK;
     const wavelength = num(effect.params?.wavelength, 8, 2, 1000);
     const middle = (this.rows - 1) / 2;
-    // Height is how far the curve swings above and below the middle row, in rows
-    const height = num(effect.params?.height, middle, 0, Math.max(0.5, middle * 2));
+    // Height is how many panels the curve covers from its top to its bottom (3 = all rows of a
+    // 3-tall wall, 1 = a flat line on the middle row). Older designs stored the swing above/below
+    // the middle as `height`, which is (span - 1) / 2.
+    const span = effect.params?.span !== undefined
+      ? num(effect.params.span, this.rows, 1, this.rows * 2)
+      : 2 * num(effect.params?.height, middle, 0, this.rows) + 1;
+    const height = (span - 1) / 2;
     const thickness = num(effect.params?.thickness, 0.7, 0.2, 3);
     const reverse = bool(effect.params?.reverse, false);
     const travel = frameNum * WAVE_LIGHTS_PER_FRAME * (reverse ? -1 : 1);

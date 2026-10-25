@@ -352,7 +352,7 @@ router.get('/effects/types', (req: Request, res: Response) => {
       ],
       params: {
         wavelength: { type: 'number', default: 8, min: 2, max: 32, label: 'Wavelength', unit: ' lights' },
-        height: { type: 'number', default: 1, min: 0, max: 2, step: 0.1, label: 'Height', unit: ' rows' },
+        span: { type: 'number', default: 3, min: 1, max: 5, step: 0.5, label: 'Height (top to bottom)', unit: ' panels' },
         thickness: { type: 'number', default: 0.7, min: 0.2, max: 2, step: 0.1, label: 'Line thickness', unit: ' rows' },
         reverse: { type: 'boolean', default: false },
       },
