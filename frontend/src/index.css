@@ -2807,19 +2807,25 @@ body {
 }
 
 /* Saved lists: one line per name (ellipsis, full name on hover), actions only on hover */
-.saved-row {
+.saved-row-inner {
   position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  min-width: 0;
 }
 
 .saved-designs-table .saved-item-button {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
 }
 
-.saved-designs-table .saved-row-actions {
-  width: 0;
-  padding: 0;
+.saved-row-actions {
+  display: flex;
+  flex-shrink: 0;
   white-space: nowrap;
 }
 
@@ -2835,14 +2841,13 @@ body {
 
 @media (hover: hover) {
   /* Actions float over the end of the row, so names get the full width until you point at them */
-  .saved-designs-table .saved-row-actions {
+  .saved-row-actions {
     position: absolute;
     right: 0;
     top: 50%;
     transform: translateY(-50%);
-    padding: 0 0.25rem 0 1.25rem;
+    padding-left: 1.25rem;
     background: linear-gradient(to right, transparent, var(--bg-tertiary) 1.1rem);
-    border: none;
     opacity: 0;
     pointer-events: none;
     transition: opacity 0.12s;

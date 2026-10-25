@@ -83,6 +83,7 @@ export default function SavedList({ title, items, selectedId, onSelect, onRename
         onClick={() => select(item.id)}
       >
         <td style={{ fontWeight: selected ? 600 : 400 }}>
+          <div className="saved-row-inner">
           {renamingId === item.id ? (
             <input
               className="form-input"
@@ -111,8 +112,7 @@ export default function SavedList({ title, items, selectedId, onSelect, onRename
               {item.name}{item.meta && <> {item.meta}</>}
             </button>
           )}
-        </td>
-        <td className="saved-row-actions">
+          <span className="saved-row-actions">
           {item.actions}
           <button className="btn-icon" style={{ padding: '0.2rem' }} title="Move to folder" aria-label={`Move ${item.name} to folder`} onClick={(e) => { e.stopPropagation(); setMovingId(item.id); }}>
             {MOVE_ICON}
@@ -123,6 +123,8 @@ export default function SavedList({ title, items, selectedId, onSelect, onRename
           <button className="btn-icon" style={{ padding: '0.2rem', color: 'var(--danger-color)' }} title="Delete" aria-label={`Delete ${item.name}`} onClick={(e) => { e.stopPropagation(); onDelete(item.id); }}>
             {trashIcon()}
           </button>
+          </span>
+          </div>
         </td>
       </tr>
     );
@@ -159,7 +161,7 @@ export default function SavedList({ title, items, selectedId, onSelect, onRename
                     count={group.items.length}
                     collapsed={groupCollapsed}
                     onToggle={() => toggle(key)}
-                    colSpan={2}
+                    colSpan={1}
                     controls={folders}
                   />
                 )}
