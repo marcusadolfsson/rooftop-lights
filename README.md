@@ -2,6 +2,9 @@
 
 A web app for designing, previewing and scheduling shows on architectural RGBW lights over ArtNet/DMX. It was built to replace QLC+ for a rooftop installation of 96 fixtures on four walls, but walls, lights and DMX mapping are all configurable.
 
+> [!WARNING]
+> **There is no built-in authentication.** Anyone who can reach the web UI can control your lights, and AI effects run generated JavaScript on the server. Never expose it directly to the internet. Run it on a private network behind your own authentication, such as a reverse proxy with Authelia, Authentik, OAuth2 Proxy, Cloudflare Access or HTTP basic auth. See [Security](#security).
+
 ![Design page with a static design](docs/screenshots/design-static.png)
 
 ## Features
