@@ -290,6 +290,7 @@ router.get('/effects/types', (req: Request, res: Response) => {
         tailLength: { type: 'number', default: 8, min: 2, max: 20 },
         reverse: { type: 'boolean', default: false },
         bounce: { type: 'boolean', default: true },
+        tailExit: { type: 'boolean', default: true, label: 'Tail leaves frame before looping' },
       },
     },
     {

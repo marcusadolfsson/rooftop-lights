@@ -321,6 +321,8 @@ export class EffectEngine {
     const tailLength = Math.round(num(effect.params?.tailLength || 8, 8, 1, 200));
     const reverse = bool(effect.params?.reverse, false);
     const bounce = bool(effect.params?.bounce, true);
+    // Let the head travel past the edge until the whole tail has left the frame before looping/turning
+    const tailExit = bool(effect.params?.tailExit, true);
     const step = Math.floor(frameNum / 4);
 
     // Initialize all to off
@@ -331,22 +333,25 @@ export class EffectEngine {
     for (let y = 0; y < 3; y++) {
       for (const row of this.getSegments(y, effect.scope)) {
         const totalWidth = row.length;
+        // Head steps per pass; with tailExit the head runs tailLength past the edge so the tail fully clears
+        const span = totalWidth + (tailExit ? tailLength : 0);
 
         let pos: number;
         let movingForward: boolean;
 
         if (bounce) {
-          const cycleLength = totalWidth * 2;
+          const cycleLength = span * 2;
           const raw = step % cycleLength;
-          if (raw >= totalWidth) {
-            pos = cycleLength - raw - 1;
+          if (raw >= span) {
+            // Coming back: re-enter at the far edge and run past the near edge by the same margin
+            pos = totalWidth - 1 - (raw - span);
             movingForward = false;
           } else {
             pos = raw;
             movingForward = true;
           }
         } else {
-          pos = step % totalWidth;
+          pos = step % span;
           movingForward = true;
         }
 

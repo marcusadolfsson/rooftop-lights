@@ -151,7 +151,7 @@ export default function MotionPanel({
                     const inputId = `motion-param-${key}`;
                     return (
                       <div key={key} className="form-group">
-                        <label className="form-label" htmlFor={inputId}>{key}</label>
+                        <label className="form-label" htmlFor={inputId}>{param.label || key}</label>
                         {param.type === 'number' ? (
                           <>
                             <input id={inputId} type="range" className="form-input" min={param.min} max={param.max} step={param.step || 1} value={params[key] as number} onChange={(e) => editor.setParam(key, parseFloat(e.target.value))} />

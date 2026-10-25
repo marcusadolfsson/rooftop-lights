@@ -73,6 +73,7 @@ export interface EffectParam {
   min?: number;
   max?: number;
   step?: number;
+  label?: string;
 }
 
 export interface Playlist {

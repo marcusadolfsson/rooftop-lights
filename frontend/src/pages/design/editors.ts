@@ -208,12 +208,15 @@ export function useMotionEditor({ preview, reload, setError, autoPreview, effect
   const fromDesignData = (data: MotionDesignData): MotionState | null => {
     const fx = effectTypes.find((e) => e.type === data.type);
     if (!fx) return null;
+    // Fill in params added to the effect after the design was saved, so the controls match what renders
+    const defaults: MotionParams = {};
+    Object.entries(fx.params).forEach(([key, param]) => { defaults[key] = param.default; });
     return {
       effect: fx,
       colors: data.colors || fx.defaultColors,
       speed: data.speed || 1,
       scope: data.scope || 'all',
-      params: (data.params as MotionParams) || {},
+      params: { ...defaults, ...((data.params as MotionParams) || {}) },
     };
   };
 
