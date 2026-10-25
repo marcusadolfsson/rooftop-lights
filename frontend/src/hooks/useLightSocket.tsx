@@ -37,3 +37,8 @@ export function useFrameData(enabled = true): FrameData {
     enabled ? store.getFrame : getEmptyFrame,
   );
 }
+
+/** Send a message on the app's WebSocket; returns false when it isn't connected. */
+export function useLightSocketSend(): (data: string) => boolean {
+  return useStore().send;
+}

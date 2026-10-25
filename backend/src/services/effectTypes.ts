@@ -5,11 +5,15 @@ import { applyLayoutDefaults } from './layoutDefaults.js';
 // AI scene creator may pick from. Params carry their type, range and label; defaults are tuned to
 // the installed layout by applyLayoutDefaults.
 
+// showIf hides a param in the editor unless another param has the given value
+type ParamCommon = { label?: string; showIf?: { param: string; equals: unknown } };
+
 export type EffectParamDef =
-  | { type: 'number'; default: number; min?: number; max?: number; step?: number; label?: string; unit?: string }
-  | { type: 'boolean'; default: boolean; label?: string }
-  | { type: 'string'; default: string; label?: string }
-  | { type: 'range'; default: [number, number]; min?: number; max?: number; step?: number; label?: string; unit?: string };
+  | ({ type: 'number'; default: number; min?: number; max?: number; step?: number; unit?: string } & ParamCommon)
+  | ({ type: 'boolean'; default: boolean } & ParamCommon)
+  | ({ type: 'string'; default: string; suggestions?: 'audioSources' } & ParamCommon)
+  | ({ type: 'select'; default: string; options: { value: string; label: string }[] } & ParamCommon)
+  | ({ type: 'range'; default: [number, number]; min?: number; max?: number; step?: number; unit?: string } & ParamCommon);
 
 export interface RGBWColor {
   r: number;
@@ -273,6 +277,42 @@ const EFFECT_TYPES: Omit<EffectTypeInfo, 'colorLabels' | 'colorHint' | 'stepFram
       width: { type: 'number', default: 1.5, min: 0.5, max: 6, step: 0.5, label: 'Ring width' },
     },
   },
+  {
+    type: 'audio',
+    name: 'Audio Level',
+    description: 'A level meter driven by live audio (UDP or HTTP input, see the Light Layout page) or simulated music',
+    defaultColors: [
+      { r: 0, g: 255, b: 0, w: 0 },
+      { r: 255, g: 180, b: 0, w: 0 },
+      { r: 255, g: 0, b: 0, w: 0 },
+      { r: 0, g: 0, b: 0, w: 0 },
+    ],
+    params: {
+      input: {
+        type: 'select', default: 'random', label: 'Input',
+        options: [{ value: 'random', label: 'Simulated music' }, { value: 'api', label: 'Live audio input' }],
+      },
+      // Blank follows whichever source sent most recently; the editor suggests known source ids
+      source: { type: 'string', default: '', label: 'Source id (blank = most recent)', suggestions: 'audioSources', showIf: { param: 'input', equals: 'api' } },
+      bpm: { type: 'number', default: 120, min: 60, max: 180, step: 1, label: 'Simulated tempo', unit: ' bpm', showIf: { param: 'input', equals: 'random' } },
+      rotation: {
+        type: 'select', default: 'left_right', label: 'Direction',
+        options: [
+          { value: 'left_right', label: 'Left → right' },
+          { value: 'right_left', label: 'Right → left' },
+          { value: 'center_out', label: 'Center out' },
+          { value: 'bottom_top', label: 'Bottom → top' },
+        ],
+      },
+      gain: { type: 'number', default: 1, min: 0.25, max: 4, step: 0.05, label: 'Gain', unit: '×' },
+      autoGain: { type: 'boolean', default: false, label: 'Auto gain (loudest of the last ~10 s fills the meter)' },
+      attack: { type: 'number', default: 0.05, min: 0, max: 1, step: 0.01, label: 'Attack', unit: ' s' },
+      release: { type: 'number', default: 0.3, min: 0, max: 3, step: 0.05, label: 'Release', unit: ' s' },
+      peakHold: { type: 'boolean', default: true, label: 'Peak hold' },
+      peakHoldTime: { type: 'number', default: 1, min: 0, max: 5, step: 0.1, label: 'Peak hold time', unit: ' s', showIf: { param: 'peakHold', equals: true } },
+      smooth: { type: 'boolean', default: true, label: 'Sub-pixel blending' },
+    },
+  },
 ];
 
 // What each color swatch does, shown under the swatches in the editor. Effects whose colors are
@@ -295,6 +335,7 @@ const colorInfo: Record<string, { colorLabels?: string[]; colorHint?: string }> 
   fireworks: { colorHint: 'Palette: each burst picks one of these colors at random' },
   strobe: { colorHint: 'Palette: each flash uses the next color in order' },
   ripple: { colorLabels: ['Rings', 'Background'] },
+  audio: { colorLabels: ['Low', 'Mid', 'High', 'Background'], colorHint: 'The meter blends from Low through Mid to High as it fills' },
 };
 
 // How Speed relates to motion. Stepped effects move one light every `stepFrames` frames at 1x
@@ -306,6 +347,7 @@ const motionInfo: Record<string, { stepFrames?: number; realTime?: boolean }> = 
   lightning: { realTime: true },
   fireworks: { realTime: true },
   strobe: { realTime: true },
+  audio: { realTime: true },
 };
 
 /** Every motion effect type with layout-aware defaults, color labels and speed info. */

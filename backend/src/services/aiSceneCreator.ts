@@ -147,6 +147,7 @@ function paramText(key: string, def: EffectParamDef): string {
   const label = def.label ? ` "${def.label}${'unit' in def && def.unit ? ` (${def.unit.trim()})` : ''}"` : '';
   if (def.type === 'boolean') return `${key}: boolean, default ${def.default}${label}`;
   if (def.type === 'string') return `${key}: text, default "${def.default}"${label}`;
+  if (def.type === 'select') return `${key}: one of ${def.options.map(o => `"${o.value}"`).join(', ')}, default "${def.default}"${label}`;
   const range = `${def.min ?? '-'}..${def.max ?? '-'}${def.step ? ` step ${def.step}` : ' (whole numbers)'}`;
   if (def.type === 'range') return `${key}: [low, high] pair within ${range}, default [${def.default.join(', ')}]${label} (a random value in the pair is used each time)`;
   return `${key}: number ${range}, default ${def.default}${label}`;
@@ -322,6 +323,8 @@ function coerceParam(value: unknown, def: EffectParamDef): { value: unknown; not
       const out = snap(n, def);
       return { value: out, note: outOfRange(n, def) ? `${n} -> ${out}` : undefined };
     }
+    case 'select':
+      return def.options.some(o => o.value === value) ? { value } : null;
     case 'range': {
       const nums = (Array.isArray(value) ? value : [value]).slice(0, 2).map(Number);
       if (nums.length === 0 || !nums.every(Number.isFinite)) return null;

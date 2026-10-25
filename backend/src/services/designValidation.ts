@@ -3,11 +3,12 @@
 // clear 400 instead of a silently blank rooftop.
 
 import { compileAICode } from './aiSandbox.js';
+import { AUDIO_ROTATIONS } from './effectEngine.js';
 
 export const MOTION_EFFECT_TYPES = [
   'ai', 'candy_cane', 'checkerboard', 'comet', 'sparkle',
   'rainbow', 'wave', 'sine', 'chase', 'converge', 'expand', 'breathe', 'text',
-  'twinkle', 'fade', 'lightning', 'fireworks', 'fire', 'strobe', 'ripple',
+  'twinkle', 'fade', 'lightning', 'fireworks', 'fire', 'strobe', 'ripple', 'audio',
 ] as const;
 
 export const MAX_AI_CODE_LENGTH = 100_000;
@@ -27,7 +28,14 @@ const BOOLEAN_PARAMS: Record<string, string[]> = {
   candy_cane: ['smooth'],
   checkerboard: ['smooth'],
   text: ['smooth'],
+  audio: ['autoGain', 'peakHold', 'smooth'],
 };
+
+// Params the effect types endpoint declares as selects: the values they accept
+const SELECT_PARAMS: Record<string, Record<string, readonly string[]>> = {
+  audio: { input: ['random', 'api'], rotation: AUDIO_ROTATIONS },
+};
+const MAX_AUDIO_SOURCE_LENGTH = 64;
 
 export type ValidationResult = { ok: true } | { ok: false; error: string };
 
@@ -122,6 +130,21 @@ export function validateMotionData(data: unknown): ValidationResult {
       if (v !== undefined && v !== null && typeof v !== 'boolean' && v !== 'true' && v !== 'false') {
         return { ok: false, error: `params.${key} must be true or false` };
       }
+    }
+  }
+
+  if (isPlainObject(params)) {
+    for (const [key, allowed] of Object.entries(SELECT_PARAMS[type] ?? {})) {
+      const v = params[key];
+      if (v !== undefined && v !== null && !(typeof v === 'string' && allowed.includes(v))) {
+        return { ok: false, error: `params.${key} must be one of: ${allowed.join(', ')}` };
+      }
+    }
+  }
+
+  if (type === 'audio' && isPlainObject(params) && params.source !== undefined && params.source !== null) {
+    if (typeof params.source !== 'string' || params.source.length > MAX_AUDIO_SOURCE_LENGTH) {
+      return { ok: false, error: `params.source must be a source id (text, at most ${MAX_AUDIO_SOURCE_LENGTH} characters)` };
     }
   }
 

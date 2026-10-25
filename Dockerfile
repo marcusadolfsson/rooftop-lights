@@ -48,6 +48,8 @@ RUN printf '{"commit":"%s","builtAt":"%s"}\n' "$GIT_COMMIT" "$(date -u +%Y-%m-%d
 # Expose ports
 EXPOSE 3030
 EXPOSE 6454/udp
+# Audio level input for the Audio Level effect (AUDIO_UDP_PORT)
+EXPOSE 7000/udp
 
 # Health check: ping /health every 30s, restart if 3 consecutive failures
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \

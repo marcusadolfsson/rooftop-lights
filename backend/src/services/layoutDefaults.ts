@@ -127,6 +127,13 @@ export function applyLayoutDefaults<T extends EffectTypeDef>(types: T[]): T[] {
       const crest = usable(s.health.w) ? { r: 0, g: 0, b: 0, w: 255 } : { r: 255, g: 0, b: 0, w: 0 };
       defaultColors = [trough, crest];
     }
+    if (fx.type === 'audio' && !usable(s.health.g) && usable(s.health.r)) {
+      // Green to red needs green; without it, run the meter from white through warm white to red
+      // (or dim red to red) so the levels still read as a gradient. Background stays as it is
+      const low = usable(s.health.w) ? { r: 0, g: 0, b: 0, w: 255 } : { r: 90, g: 0, b: 0, w: 0 };
+      const mid = usable(s.health.w) ? { r: 255, g: 0, b: 0, w: 140 } : { r: 170, g: 0, b: 0, w: 0 };
+      defaultColors = [low, mid, { r: 255, g: 0, b: 0, w: 0 }, ...defaultColors.slice(3)];
+    }
     return { ...fx, params, defaultColors, ...(speeds[fx.type] ? { defaultSpeed: speeds[fx.type] } : {}) };
   });
 }

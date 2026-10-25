@@ -1,5 +1,6 @@
 import { getDatabase } from '../models/database.js';
 import { AICodeRunner, AILayout } from './aiSandbox.js';
+import { getAudioInput, newMeterState, stepMeter, MeterOptions, MeterValue } from './audioInput.js';
 
 export interface RGBW {
   r: number;
@@ -331,7 +332,7 @@ function textBitmapWidth(text: string): number {
 }
 
 /** Effects timed in real frames (they ignore Speed); everything else gets a speed-scaled frame. */
-const REAL_TIME_EFFECTS = new Set(['twinkle', 'fade', 'lightning', 'fireworks', 'strobe']);
+const REAL_TIME_EFFECTS = new Set(['twinkle', 'fade', 'lightning', 'fireworks', 'strobe', 'audio']);
 
 /** What the cycle length depends on in the layout: the segment lengths for the scope and the row count. */
 export interface CycleLayout {
@@ -451,6 +452,59 @@ export function effectCycleFrames(rawEffect: unknown, layout: CycleLayout): numb
   if (frames === null || !Number.isFinite(frames) || frames <= 0) return null;
   const real = REAL_TIME_EFFECTS.has(effect.type) ? frames : frames / effect.speed;
   return Math.max(1, Math.round(real));
+}
+
+/** Where the Audio Level meter fills from. */
+export const AUDIO_ROTATIONS = ['left_right', 'right_left', 'center_out', 'bottom_top'] as const;
+export type AudioRotation = typeof AUDIO_ROTATIONS[number];
+
+/** Audio Level settings read from params (shared by live and simulated input). */
+function audioMeterOptions(effect: MotionEffect): MeterOptions {
+  const p = effect.params ?? {};
+  return {
+    attack: num(p.attack, 0.05, 0, 5),
+    release: num(p.release, 0.3, 0, 10),
+    gain: num(p.gain, 1, 0, 10),
+    autoGain: bool(p.autoGain, false),
+    peakHold: bool(p.peakHold, true),
+    peakHoldTime: num(p.peakHoldTime, 1, 0, 10),
+  };
+}
+
+/**
+ * Music-like level (0..100) for the Audio Level effect's simulated input, a pure function of the
+ * real frame: a kick on every beat that decays quickly, a softer off-beat, a little noise, and
+ * 8-bar sections that get louder or quieter (with the odd quiet breakdown).
+ */
+export function simulatedAudioLevel(frame: number, bpm: number): number {
+  const f = Math.floor(frame);
+  const beatFrames = (FPS * 60) / Math.max(30, Math.min(300, bpm));
+  const beat = Math.floor(f / beatFrames);
+  const sinceBeat = (f - beat * beatFrames) / FPS;
+  const kick = (0.7 + 0.3 * rand(beat, 11)) * Math.exp(-sinceBeat / 0.12);
+  const half = beatFrames / 2;
+  const sinceHalf = sinceBeat * FPS >= half ? (sinceBeat * FPS - half) / FPS : Infinity;
+  const hat = rand(beat, 12) < 0.8 ? 0.6 * Math.exp(-sinceHalf / 0.06) : 0;
+  const section = Math.floor(beat / 32);
+  const loudness = rand(section, 13) < 0.15 ? 0.3 : 0.6 + 0.4 * rand(section, 14);
+  const level = loudness * (20 + 60 * kick + 20 * hat) + 8 * rand(f, 15);
+  return Math.max(0, Math.min(100, level));
+}
+
+/**
+ * Simulated input run through the meter (gain, attack/release, peak hold). Replays the frames
+ * leading up to `frame` from silence, enough for the smoothing to settle, so any frame renders the
+ * same whenever it is asked for.
+ */
+function simulatedAudioMeter(frame: number, bpm: number, opts: MeterOptions): MeterValue {
+  const settle = Math.max(5 * opts.attack, 5 * opts.release, opts.peakHold ? opts.peakHoldTime + 2 : 0);
+  const window = Math.max(FPS, Math.min(10 * FPS, Math.ceil(settle * FPS)));
+  const end = Math.floor(frame);
+  const state = newMeterState();
+  for (let f = end - window; f <= end; f++) {
+    stepMeter(state, simulatedAudioLevel(f, bpm) * opts.gain, 1 / FPS, opts);
+  }
+  return { level: state.value / 100, peak: state.peak / 100 };
 }
 
 export class EffectEngine {
@@ -645,6 +699,8 @@ export class EffectEngine {
         return this.generateBreathe(effect, frameNum);
       case 'text':
         return this.generateText(effect, frameNum);
+      case 'audio':
+        return this.generateAudio(effect, realFrame);
       case 'ai':
         return this.generateAI(effect, frameNum);
       default:
@@ -1299,6 +1355,81 @@ export class EffectEngine {
       });
     }
 
+    return frame;
+  }
+
+  /** Audio Level's current level and peak (0..1): live input from a source, or the simulation. */
+  private audioMeter(effect: MotionEffect, realFrame: number): MeterValue {
+    const opts = audioMeterOptions(effect);
+    if (effect.params?.input === 'api') {
+      const source = typeof effect.params.source === 'string' ? effect.params.source.trim() : '';
+      return getAudioInput().meterLevel(source, opts);
+    }
+    return simulatedAudioMeter(realFrame, num(effect.params?.bpm, 120, 30, 300), opts);
+  }
+
+  // Audio Level - a level meter: lights fill along each segment (or up the rows) with the live
+  // audio level, in a gradient from the Low to the High color, with an optional peak-hold marker.
+  // Real frames: attack, release and hold are in seconds whatever the Speed
+  private generateAudio(effect: MotionEffect, realFrame: number): Map<number, RGBW> {
+    const frame = new Map<number, RGBW>();
+    const low: RGBW = effect.colors[0] || { r: 0, g: 255, b: 0, w: 0 };
+    const mid: RGBW = effect.colors[1] || { r: 255, g: 180, b: 0, w: 0 };
+    const high: RGBW = effect.colors[2] || { r: 255, g: 0, b: 0, w: 0 };
+    const background: RGBW = effect.colors[3] || BLACK;
+    const rotation: AudioRotation = (AUDIO_ROTATIONS as readonly unknown[]).includes(effect.params?.rotation)
+      ? effect.params?.rotation as AudioRotation
+      : 'left_right';
+    const smooth = bool(effect.params?.smooth, true);
+    const peakHold = bool(effect.params?.peakHold, true);
+
+    let meter: MeterValue;
+    try {
+      meter = this.audioMeter(effect, realFrame);
+    } catch {
+      meter = { level: 0, peak: 0 };
+    }
+    const level = Number.isFinite(meter.level) ? Math.max(0, Math.min(1, meter.level)) : 0;
+    const peak = Number.isFinite(meter.peak) ? Math.max(0, Math.min(1, meter.peak)) : 0;
+
+    const gradient = (p: number): RGBW => (p < 0.5 ? mixColor(low, mid, p * 2) : mixColor(mid, high, (p - 0.5) * 2));
+    // Light `i` of `n` along the meter: lit as far as the level reaches (the boundary light
+    // partly when smooth), plus the peak marker above the fill
+    const colorAt = (i: number, n: number): RGBW => {
+      const fill = level * n;
+      const k = smooth ? Math.max(0, Math.min(1, fill - i)) : (i < Math.round(fill) ? 1 : 0);
+      const c = gradient(n > 1 ? i / (n - 1) : 1);
+      if (peakHold && peak > 0.005 && k < 1 && i === Math.max(0, Math.min(n - 1, Math.ceil(peak * n) - 1))) return c;
+      return k > 0 ? mixColor(background, c, k) : { ...background };
+    };
+
+    for (const light of this.lights) frame.set(light.light_id, { ...background });
+
+    if (rotation === 'bottom_top') {
+      // Fills up the rows: each wall by its own height (Continuous uses the tallest wall)
+      const heights = new Map(this.walls.map(w => [w.id, w.height]));
+      for (const light of this.lights) {
+        const n = effect.scope === 'all' ? this.rows : Math.max(1, heights.get(light.wall_id) ?? this.rows);
+        if (light.matrix_y < n) frame.set(light.light_id, colorAt(light.matrix_y, n));
+      }
+      return frame;
+    }
+
+    for (let y = 0; y < this.rows; y++) {
+      for (const row of this.getSegments(y, effect.scope)) {
+        const len = row.length;
+        if (rotation === 'center_out') {
+          // Both halves fill outward from the middle; odd lengths share the middle light
+          const center = (len - 1) / 2;
+          const n = Math.ceil(len / 2);
+          for (let j = 0; j < len; j++) frame.set(row[j].light_id, colorAt(Math.floor(Math.abs(j - center)), n));
+        } else {
+          for (let j = 0; j < len; j++) {
+            frame.set(row[j].light_id, colorAt(rotation === 'right_left' ? len - 1 - j : j, len));
+          }
+        }
+      }
+    }
     return frame;
   }
 

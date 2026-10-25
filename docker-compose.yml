@@ -11,6 +11,7 @@ services:
     ports:
       - "3030:3030"
       - "6454:6454/udp"  # ArtNet port
+      - "7000:7000/udp"  # Audio level input (Audio Level effect)
     volumes:
       - rooftop-data:/app/data
     environment:
@@ -22,6 +23,8 @@ services:
       - TZ=${TZ:-America/New_York}
       # Extra allowed CORS origins, comma-separated (default: same-origin only)
       - CORS_ORIGINS=${CORS_ORIGINS:-}
+      # UDP port for live audio levels (0 disables; keep in sync with the published port above)
+      - AUDIO_UDP_PORT=${AUDIO_UDP_PORT:-7000}
     restart: unless-stopped
     networks:
       - rooftop-network

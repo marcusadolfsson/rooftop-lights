@@ -81,14 +81,40 @@ export interface EffectType {
 }
 
 export interface EffectParam {
-  // 'range' is a [min, max] pair; the effect picks a random value inside it each time
-  type: 'number' | 'boolean' | 'string' | 'range';
+  // 'range' is a [min, max] pair; the effect picks a random value inside it each time.
+  // 'select' is one of `options` (stored as its value)
+  type: 'number' | 'boolean' | 'string' | 'range' | 'select';
   default: number | boolean | string | [number, number];
   min?: number;
   max?: number;
   step?: number;
   label?: string;
   unit?: string;
+  options?: { value: string; label: string }[];
+  // Only shown while another param has this value (e.g. the source id only for live input)
+  showIf?: { param: string; equals: unknown };
+  // A string param whose input suggests values from the server ('audioSources': known audio inputs)
+  suggestions?: 'audioSources';
+}
+
+/** A live audio input (GET /api/audio/sources). Levels are 0-100. */
+export interface AudioSource {
+  id: string;
+  level: number;
+  raw: number;
+  peak: number | null;
+  lastSeen: string;
+  ageMs: number;
+  packetsPerSecond: number;
+  address: string | null;
+  transport: 'udp' | 'http' | 'ws';
+}
+
+export interface AudioInputStatus {
+  udpPort: number | null;
+  listening: boolean;
+  error: string | null;
+  maxPacketBytes: number;
 }
 
 /** A scene is a short piece of designs only, played in order; a playlist can also hold scenes and playlists. */

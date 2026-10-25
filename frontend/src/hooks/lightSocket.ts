@@ -54,6 +54,14 @@ export class LightSocketStore {
     this.statusListeners.forEach((l) => l());
   }
 
+  /** Send a message to the server if the socket is open; false when it isn't (caller can fall back). */
+  send = (data: string): boolean => {
+    const ws = this.ws;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+    ws.send(data);
+    return true;
+  };
+
   // --- connection lifecycle ---
   start() {
     if (!this.stopped) return;

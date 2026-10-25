@@ -1,6 +1,6 @@
 import express, { NextFunction, Request, Response } from 'express';
 import cors from 'cors';
-import { WebSocketServer, WebSocket } from 'ws';
+import { WebSocketServer, WebSocket, RawData } from 'ws';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import http from 'http';
@@ -12,6 +12,7 @@ import { getScheduler } from './scheduler/scheduler.js';
 import { getEffectEngine } from './services/effectEngine.js';
 import { serverTimeZone, localDateTimeString } from './scheduler/activeSchedule.js';
 import { logRateLimited } from './utils/rateLimitedLog.js';
+import { getAudioInput, audioUdpPortFromEnv } from './services/audioInput.js';
 
 import layoutRoutes from './routes/layout.js';
 import designsRoutes from './routes/designs.js';
@@ -20,6 +21,7 @@ import schedulesRoutes from './routes/schedules.js';
 import artnetRoutes from './routes/artnet.js';
 import previewRoutes from './routes/preview.js';
 import foldersRoutes from './routes/folders.js';
+import audioRoutes from './routes/audio.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -54,6 +56,22 @@ app.use(cors({
   origin: (origin, cb) => cb(null, !!origin && corsOrigins.has(origin)),
 }));
 
+/** Whether a browser Origin is this server (by the request's Host / X-Forwarded-Host) or an allowed CORS origin. */
+function isSameOrAllowedOrigin(origin: string, headers: http.IncomingHttpHeaders): boolean {
+  if (corsOrigins.has(origin)) return true;
+  let originHost: string;
+  try {
+    originHost = new URL(origin).host;
+  } catch {
+    return false;
+  }
+  const hosts = [headers.host, headers['x-forwarded-host']]
+    .flatMap(h => (Array.isArray(h) ? h : [h]))
+    .filter((h): h is string => typeof h === 'string')
+    .flatMap(h => h.split(',').map(x => x.trim()));
+  return hosts.includes(originHost);
+}
+
 // CSRF guard: a browser on another site can still fire "simple" cross-origin
 // POSTs without a preflight, so reject state-changing requests whose Origin is
 // neither this host nor an allowed CORS origin. Skipped in development, where
@@ -62,19 +80,7 @@ const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 app.use((req: Request, res: Response, next: NextFunction) => {
   const origin = req.headers.origin;
   if (!origin || SAFE_METHODS.has(req.method) || process.env.NODE_ENV === 'development') return next();
-  if (corsOrigins.has(origin)) return next();
-  let originHost: string;
-  try {
-    originHost = new URL(origin).host;
-  } catch {
-    res.status(403).json({ error: 'Cross-origin request rejected' });
-    return;
-  }
-  const hosts = [req.headers.host, req.headers['x-forwarded-host']]
-    .flatMap(h => (Array.isArray(h) ? h : [h]))
-    .filter((h): h is string => typeof h === 'string')
-    .flatMap(h => h.split(',').map(x => x.trim()));
-  if (hosts.includes(originHost)) return next();
+  if (isSameOrAllowedOrigin(origin, req.headers)) return next();
   res.status(403).json({ error: 'Cross-origin request rejected' });
 });
 
@@ -88,6 +94,7 @@ app.use('/api/schedules', schedulesRoutes);
 app.use('/api/artnet', artnetRoutes);
 app.use('/api/preview', previewRoutes);
 app.use('/api/folders', foldersRoutes);
+app.use('/api/audio', audioRoutes);
 
 // Health check (unauthenticated, fast, checks DB)
 const startTime = Date.now();
@@ -166,11 +173,32 @@ app.use((err: any, req: Request, res: Response, _next: NextFunction) => {
 const server = http.createServer(app);
 
 // WebSocket server for real-time preview
-// Clients never send anything meaningful, so keep the inbound payload limit small
+// The only thing clients send is audio levels from the browser microphone (tiny JSON), so keep
+// the inbound payload limit small
 const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 64 * 1024 });
 
-wss.on('connection', (ws: WebSocket) => {
+wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
   console.log('WebSocket client connected');
+
+  // Browser microphone levels: {"type":"audio","id":"browser-chrome-mac","level":42.5,"peak":71,"seq":12}.
+  // Only from pages served by this server (same check as the CSRF guard; skipped in development,
+  // where the Vite proxy rewrites Host)
+  const origin = req.headers.origin;
+  const audioAllowed = process.env.NODE_ENV === 'development' || !origin || isSameOrAllowedOrigin(origin, req.headers);
+  const address = req.socket.remoteAddress ?? null;
+  ws.on('message', (data: RawData, isBinary: boolean) => {
+    if (isBinary || !audioAllowed) return;
+    try {
+      const text = data.toString();
+      if (text.length > 1024) return;
+      const message = JSON.parse(text);
+      if (message && typeof message === 'object' && message.type === 'audio') {
+        getAudioInput().handleWebSocket(message, address);
+      }
+    } catch {
+      logRateLimited('WebSocket: ignored a message that is not valid JSON');
+    }
+  });
 
   const scheduler = getScheduler();
   scheduler.addWSClient(ws);
@@ -226,6 +254,9 @@ async function initialize(): Promise<void> {
   console.log('Starting scheduler...');
   getScheduler().start();
 
+  // Live audio levels for the Audio Level effect (AUDIO_UDP_PORT, 0 disables)
+  getAudioInput().start(audioUdpPortFromEnv());
+
   console.log('Initialization complete');
 }
 
@@ -243,6 +274,7 @@ function shutdown(): void {
   }, 5000).unref();
 
   getScheduler().stop();
+  getAudioInput().stop();
 
   // Open WebSockets would otherwise keep server.close() waiting forever
   for (const client of wss.clients) {

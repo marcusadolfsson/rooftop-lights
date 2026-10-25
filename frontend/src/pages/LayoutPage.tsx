@@ -3,6 +3,7 @@ import { useLocation } from 'react-router-dom';
 import { layoutAPI, artnetAPI, healthAPI } from '../utils/api';
 import type { Wall, WallGroup, Light, ArtNetConfig, LayoutData } from '../types';
 import LightIdPreview from '../components/LightIdPreview';
+import AudioInputsCard from '../components/AudioInputsCard';
 import { useEscapeKey } from '../hooks/useEscapeKey';
 
 function LayoutPage() {
@@ -435,6 +436,9 @@ function LayoutPage() {
           </div>
         )}
       </div>
+
+      {/* Live audio inputs for the Audio Level effect */}
+      <AudioInputsCard visible={isVisible} />
 
       {/* Layout Summary */}
       {layout && (

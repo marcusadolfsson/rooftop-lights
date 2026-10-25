@@ -15,6 +15,8 @@ import type {
   RGBW,
   FolderSummary,
   AiSceneResult,
+  AudioSource,
+  AudioInputStatus,
 } from '../types';
 
 const API_BASE = '/api';
@@ -383,6 +385,12 @@ export const previewAPI = {
       method: 'POST',
       body: JSON.stringify(data),
     }),
+};
+
+// Live audio inputs for the Audio Level effect
+export const audioAPI = {
+  getSources: () => fetchJSON<AudioSource[]>('/audio/sources'),
+  getStatus: () => fetchJSON<AudioInputStatus>('/audio/status'),
 };
 
 // Health (served outside /api). timeZone is optional: newer backends report the

@@ -1,5 +1,7 @@
-import type { CSSProperties, ReactNode } from 'react';
-import type { Design, EffectType, RGBW, Wall } from '../../types';
+import { useEffect, useState, type CSSProperties, type ReactNode } from 'react';
+import type { Design, EffectParam, EffectType, RGBW, Wall } from '../../types';
+import { audioAPI } from '../../utils/api';
+import BrowserMicControl from '../../components/BrowserMicControl';
 import { rgbwToCss } from '../../utils/color';
 import { useIsMobile } from '../../hooks/useMediaQuery';
 import ColorPicker from './ColorPicker';
@@ -115,6 +117,7 @@ export function MotionDesignEditor({
   const isPalette = !!effect && isPaletteEffect(effect);
 
   const pickColor = (first: RGBW | undefined) => { if (first) setCurrentColor({ ...first }); };
+  const audioSourceIds = useAudioSourceIds(!!effect && Object.values(effect.params).some((p) => p.suggestions === 'audioSources'));
 
   // Picker changes recolor the selected palette entry
   const handleColorChange = (color: RGBW) => {
@@ -267,9 +270,23 @@ export function MotionDesignEditor({
               <div className="form-group" style={{ marginTop: '1.25rem' }}>
                 <span className="form-label">Parameters</span>
                 <div className="fx-params">
-                  {Object.entries(effect.params).filter(([key]) => key !== 'syncWalls').map(([key, param]) => {
+                  {Object.entries(effect.params).filter(([key, param]) => key !== 'syncWalls' && isParamShown(param, params)).map(([key, param]) => {
                     const inputId = `motion-param-${key}`;
                     const label = param.label || humanize(key);
+                    if (param.type === 'select') {
+                      const options = param.options ?? [];
+                      const value = String(params[key] ?? param.default);
+                      return (
+                        <div key={key} className="fx-param">
+                          <label className="fx-param-label" htmlFor={inputId}>{label}</label>
+                          <select id={inputId} className="form-select" value={value} onChange={(e) => editor.setParam(key, e.target.value)}>
+                            {/* A saved value the effect no longer offers stays visible instead of silently changing */}
+                            {!options.some((o) => o.value === value) && <option value={value}>{value}</option>}
+                            {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                          </select>
+                        </div>
+                      );
+                    }
                     if (param.type === 'boolean') {
                       const on = !!params[key];
                       return (
@@ -288,10 +305,19 @@ export function MotionDesignEditor({
                       );
                     }
                     if (param.type === 'string') {
+                      const listId = param.suggestions === 'audioSources' && audioSourceIds.length > 0 ? `${inputId}-options` : undefined;
                       return (
                         <div key={key} className="fx-param">
                           <label className="fx-param-label" htmlFor={inputId}>{label}</label>
-                          <input id={inputId} type="text" className="form-input" value={(params[key] as string) || ''} onChange={(e) => editor.setParam(key, e.target.value)} />
+                          <input id={inputId} type="text" className="form-input" list={listId} value={(params[key] as string) || ''} onChange={(e) => editor.setParam(key, e.target.value)} />
+                          {listId && (
+                            <datalist id={listId}>
+                              {audioSourceIds.map((id) => <option key={id} value={id} />)}
+                            </datalist>
+                          )}
+                          {param.suggestions === 'audioSources' && (
+                            <BrowserMicControl compact onStart={(id) => editor.setParam(key, id)} />
+                          )}
                         </div>
                       );
                     }
@@ -338,6 +364,28 @@ export function MotionDesignEditor({
       </div>
     </>
   );
+}
+
+/** A param with showIf is only shown while the param it depends on has that value. */
+function isParamShown(param: EffectParam, params: Record<string, unknown>): boolean {
+  if (!param.showIf) return true;
+  return params[param.showIf.param] === param.showIf.equals;
+}
+
+// Ids of the audio inputs the server has heard from, offered as suggestions for a source id
+function useAudioSourceIds(enabled: boolean): string[] {
+  const [ids, setIds] = useState<string[]>([]);
+  useEffect(() => {
+    if (!enabled) return;
+    let cancelled = false;
+    const load = () => audioAPI.getSources()
+      .then((sources) => { if (!cancelled) setIds(sources.map((s) => s.id)); })
+      .catch(() => { /* suggestions only; free text still works */ });
+    load();
+    const timer = window.setInterval(load, 10_000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [enabled]);
+  return ids;
 }
 
 // "tailLength" -> "Tail length", "width1" -> "Width 1"

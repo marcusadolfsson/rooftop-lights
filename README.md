@@ -41,6 +41,7 @@ A web app for designing, previewing and scheduling shows on architectural RGBW l
 | Fire | Flickering flames, hotter along the bottom row |
 | Strobe | Fast on/off flashing that cycles through the palette |
 | Ripple | Rings spreading outward from a chosen point |
+| Audio Level | A level meter driven by live audio (a microphone over UDP/HTTP, or this computer's mic) or simulated music; see [Audio input](#audio-input) |
 | AI | Custom JavaScript animation written by the AI designer |
 
 ![Motion effect editor](docs/screenshots/design-motion.png)
@@ -85,6 +86,7 @@ Every page has a live preview fed over WebSocket, in 2D (the walls unrolled into
 - For each light: its ID, type (RGB or RGBW), DMX start channel and any defective channels (R, G, B or W) to mask out.
 - A **Light IDs** preview labels every fixture with its ID, in 2D or 3D, seen from **Outside** or from **Inside** (standing in the middle looking out). Clicking a light opens its settings.
 - ArtNet settings: unicast or broadcast, universe, refresh rate (1–44 FPS), plus a test flash.
+- **Audio Inputs**: every audio source the server hears, with a live level bar, last seen, packets per second and sender address, a **Use this computer's microphone** button, and copy-paste ESP32 / curl / netcat examples filled in with this server's address.
 
 ![Light Layout page](docs/screenshots/layout.png)
 
@@ -172,6 +174,7 @@ The tests copy that database again to a temp file, so the file you pass is never
 | `TZ` | Timezone used to evaluate schedule times | `America/New_York` (set in the compose files) |
 | `CORS_ORIGINS` | Extra origins allowed to call the API, comma-separated | same origin only |
 | `AI_CODE_TIMEOUT_MS` | Time budget per frame for AI effect code | `20` |
+| `AUDIO_UDP_PORT` | UDP port for live audio levels (`0` disables) | `7000` |
 | `NODE_ENV` | `production` or `development` | `production` |
 
 Schedule times are evaluated in the container's `TZ`, and the Schedule page shows which zone that is. Local development without Docker needs Node 20.19+ or 22.12+; the images use Node 24.
@@ -202,6 +205,7 @@ These protections are built in:
 | Schedules | `GET/POST /api/schedules`, `PUT/DELETE /api/schedules/:id`, `GET/POST /api/schedules/default`, `GET /api/schedules/active` |
 | Preview | `GET /api/preview/status`, `POST /api/preview/start`, `/effect`, `/playlist`, `/lights`, `/stop`, `/clear-soft` |
 | ArtNet | `GET/PUT /api/artnet/config`, `GET /api/artnet/status`, `POST /api/artnet/test` |
+| Audio | `POST /api/audio/level`, `GET /api/audio/sources`, `GET /api/audio/status` (see [Audio input](#audio-input)) |
 
 ### WebSocket
 
@@ -210,6 +214,8 @@ Connect to `/ws` to receive:
 - `{ type: "layout", data: { walls, lights } }` once on connect
 - `{ type: "frame", data: { [lightId]: { r, g, b, w } }, dmxRate }` about 10 times per second
 
+and to send browser microphone levels: `{ type: "audio", id, level, peak, seq }` (same fields as [Audio input](#audio-input); only from pages served by this server).
+
 ```javascript
 const ws = new WebSocket(`ws://${location.host}/ws`);
 ws.onmessage = (event) => {
@@ -217,6 +223,81 @@ ws.onmessage = (event) => {
   if (msg.type === 'frame') console.log(msg.data[1]); // color of light 1
 };
 ```
+
+## Audio input
+
+The **Audio Level** effect draws a level meter: lights fill along each segment (Continuous, Per Wall with the wall picker, or Per Group) from left to right, right to left, from the center out, or up the rows, blending from the Low through the Mid to the High color, with an optional peak-hold marker and sub-pixel blending at the edge of the fill. Gain, attack, release and peak hold time are in seconds and ignore Speed. **Auto gain** follows the loudest level of the last ~10 seconds so it fills the meter, boosting at most 4× so a quiet room stays dark. **Input: Simulated music** needs no hardware (a beat at the chosen tempo); **Live audio input** follows a source by id (blank follows whichever source sent most recently).
+
+Senders send one reading per packet, 30–50 per second:
+
+```json
+{"id":"mic-1","level":42.5,"peak":71,"seq":1234}
+```
+
+| Field | | |
+|---|---|---|
+| `level` | required | 0–100. The ESP32 example maps RMS from −60..0 dBFS to 0..100 |
+| `peak` | optional | 0–100, shown on the Light Layout page |
+| `id` | optional | source name, up to 64 characters; default `default` |
+| `seq` | optional | increasing counter; older or repeated packets are dropped. A big jump back (50+), five "late" packets in a row, or 5 s of silence counts as a restart |
+
+- **UDP** (preferred): one JSON object per datagram to port `AUDIO_UDP_PORT` (7000, published by the compose files), at most 512 bytes. Malformed packets are ignored and logged at most once a minute.
+- **HTTP**: `POST /api/audio/level` with the same JSON, or an array of readings. Returns `{ accepted, rejected }`. Requests without an `Origin` header (curl, an ESP32) are allowed, like the rest of the API.
+- **This computer's microphone**: the **Use this computer's microphone** button on the Light Layout page (and next to the effect's source field) asks for mic permission, measures the level in the browser with the same 0–100 scale, and streams it over the page's WebSocket (`{"type":"audio", ...reading}`), falling back to HTTP. Source id defaults to `browser-<browser>-<os>` and can be changed. It needs https or localhost, stops with the Stop button, when the tab closes, or after the tab has been hidden for 30 s. Background tabs are throttled by the browser to about one reading a second.
+- `GET /api/audio/sources` lists sources heard in the last 10 minutes: `id`, `level` (now, with the timeout fade), `raw`, `peak`, `lastSeen`, `ageMs`, `packetsPerSecond`, `address`, `transport`. `GET /api/audio/status` returns the UDP port and whether it is listening.
+
+A source that stops sending holds its last level for 1 s, then fades to 0 over 0.5 s.
+
+Test from a terminal:
+
+```bash
+echo -n '{"id":"test","level":60}' | nc -u -w0 <server> 7000
+curl -X POST -H 'Content-Type: application/json' -d '{"id":"test","level":60}' http://<server>:3030/api/audio/level
+```
+
+ESP32 (Arduino) sketch for an analog microphone module (MAX4466 / MAX9814 on GPIO 34); the Light Layout page shows it with your server's address filled in:
+
+```cpp
+#include <WiFi.h>
+#include <WiFiUdp.h>
+
+const char* SERVER = "192.168.1.50";  // the rooftop server
+const uint16_t PORT = 7000;
+WiFiUDP udp;
+uint32_t seq = 0;
+float dc = 2048, peak = 0;
+
+float readLevel() {  // RMS over ~20 ms, -60..0 dBFS -> 0..100
+  double acc = 0; int n = 0; uint32_t start = millis();
+  while (millis() - start < 20) {
+    float s = analogRead(34);
+    dc += (s - dc) * 0.001f;
+    float v = (s - dc) / 2048.0f;
+    acc += v * v; n++;
+  }
+  float db = 20.0f * log10f(sqrt(acc / max(n, 1)) + 1e-6f);
+  return constrain((db + 60.0f) * (100.0f / 60.0f), 0.0f, 100.0f);
+}
+
+void setup() {
+  WiFi.begin("your-wifi", "your-password");
+  while (WiFi.status() != WL_CONNECTED) delay(250);
+}
+
+void loop() {
+  float level = readLevel();
+  peak = max(level, peak * 0.95f);
+  char msg[96];
+  int len = snprintf(msg, sizeof msg, "{\"id\":\"mic-1\",\"level\":%.1f,\"peak\":%.0f,\"seq\":%lu}",
+                     level, peak, (unsigned long)seq++);
+  udp.beginPacket(SERVER, PORT);
+  udp.write((const uint8_t*)msg, len);
+  udp.endPacket();
+  delay(5);  // about 40 readings per second
+}
+```
+
+The UDP port has no authentication either: anything on the network can send levels. They only affect designs that use the Audio Level effect with live input.
 
 ## Project structure
 

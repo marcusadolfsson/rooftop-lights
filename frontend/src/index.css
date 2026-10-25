@@ -2578,3 +2578,194 @@ body {
     justify-content: center;
   }
 }
+
+/* Audio Inputs card (Light Layout page) */
+.audio-status {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+.audio-intro,
+.audio-empty,
+.audio-howto p {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  margin-bottom: 0.75rem;
+  overflow-wrap: anywhere;
+}
+
+.audio-intro code,
+.audio-howto p code {
+  color: var(--text-primary);
+}
+
+.audio-sources {
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.audio-source {
+  background-color: var(--bg-tertiary);
+  border-radius: 0.5rem;
+  padding: 0.6rem 0.75rem;
+  min-width: 0;
+}
+
+.audio-source.stale {
+  opacity: 0.6;
+}
+
+.audio-source-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.4rem;
+  font-size: 0.85rem;
+}
+
+.audio-source-head strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.audio-source-level {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+}
+
+.audio-meter {
+  position: relative;
+  height: 10px;
+  border-radius: 5px;
+  background-color: var(--bg-primary);
+  overflow: hidden;
+}
+
+/* Green to red across the whole track; the fill reveals as much as the level reaches */
+.audio-meter-fill {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to right, var(--accent-green), var(--accent-yellow) 60%, var(--accent-red));
+  clip-path: inset(0 calc(100% - var(--level, 0%)) 0 0);
+  transition: clip-path 0.12s linear;
+}
+
+.audio-meter-peak {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: var(--peak, 0%);
+  width: 2px;
+  margin-left: -1px;
+  background-color: var(--text-primary);
+}
+
+.audio-source-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.75rem;
+  margin-top: 0.4rem;
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+}
+
+.audio-howto summary {
+  cursor: pointer;
+  font-size: 0.85rem;
+  margin-bottom: 0.5rem;
+}
+
+.audio-code {
+  margin-bottom: 0.75rem;
+}
+
+.audio-code-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  margin-bottom: 0.3rem;
+}
+
+.audio-code pre {
+  background-color: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 0.5rem;
+  padding: 0.6rem 0.75rem;
+  font-size: 0.72rem;
+  line-height: 1.45;
+  overflow-x: auto;
+  max-height: 22rem;
+}
+
+/* "Use this computer's microphone" (Audio Inputs card, Audio Level source field) */
+.browser-mic {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.5rem 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.browser-mic.compact {
+  margin: 0.4rem 0 0;
+}
+
+.browser-mic-id {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  flex: 0 1 14rem;
+  min-width: 0;
+}
+
+.browser-mic-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex: 1 1 16rem;
+  min-width: 0;
+}
+
+.browser-mic-meter {
+  flex: 1 1 6rem;
+  min-width: 4rem;
+  /* Shows on the editor's dark parameter cells too */
+  background-color: var(--bg-tertiary);
+}
+
+.browser-mic-label {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.browser-mic-error {
+  flex-basis: 100%;
+  font-size: 0.75rem;
+  color: var(--danger-color);
+}
+
+/* Next to the source field the cell is narrow: meter on its own line, then the label and Stop */
+.browser-mic.compact .browser-mic-row {
+  flex-wrap: wrap;
+}
+
+.browser-mic.compact .browser-mic-meter {
+  flex: 1 1 100%;
+}
+
+.browser-mic.compact .browser-mic-label {
+  flex: 1 1 0;
+}
