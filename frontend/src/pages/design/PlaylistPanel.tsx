@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useRef, useState, type DragEvent, type ReactNode } from 'react';
 import type { Design, Playlist, PlaylistKind } from '../../types';
-import SavedList, { EDIT_ICON, trashIcon } from './SavedList';
+import SavedList, { trashIcon } from './SavedList';
 import { FolderHeaderRow, type FolderControls } from './Folders';
 import { canonicalFolder, groupByFolder, groupKey, hasFolders, MAX_FOLDER_LENGTH, normalizeFolder, sameFolder, useCollapsedGroups } from '../../utils/folders';
 import { formatSeconds, KIND_LABEL, MAX_REPEAT_COUNT, playlistKind, type EditingPlaylistItem, type PlaylistEditor } from './editors';
@@ -14,8 +14,6 @@ interface PlaylistPanelProps {
   playlists: Playlist[];
   sidebarHeader: ReactNode;
   onSave: () => void;
-  // Turn a saved scene into a playlist or the other way round
-  onConvert: (id: string, to: PlaylistKind) => void;
   onMove: (id: string, folder: string | null) => Promise<void>;
   folders: FolderControls;
   // Playback of the editor's current items in the preview; playingIndex is the item playing now
@@ -52,14 +50,11 @@ interface PickerEntry {
 const PLAY_ICON = <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><polygon points="6 4 20 12 6 20 6 4"/></svg>;
 const STOP_ICON = <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="1"/></svg>;
 
-const CONVERT_ICON = <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 014-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 01-4 4H3"/></svg>;
-
 export default function PlaylistPanel({
-  editor, designs, playlists, sidebarHeader, onSave, onConvert, onMove, folders, isPlaying, playingIndex, onPlay, onStop, inline,
+  editor, designs, playlists, sidebarHeader, onSave, onMove, folders, isPlaying, playingIndex, onPlay, onStop, inline,
 }: PlaylistPanelProps) {
   const { selectedPlaylist, items, dragKey, isScene, noun } = editor;
   const kindLabel = KIND_LABEL[editor.kind];
-  const otherKind: PlaylistKind = isScene ? 'playlist' : 'scene';
   const childKind = (id: string | null): PlaylistKind => {
     const child = playlists.find((p) => p.id === id);
     return child ? playlistKind(child) : 'playlist';
@@ -344,17 +339,6 @@ export default function PlaylistPanel({
               {p.items.length} items{p.totalSeconds ? ` · ${formatSeconds(p.totalSeconds)}` : ''}
             </span>
           ),
-            actions: (
-              <button
-                className="btn-icon"
-                style={{ padding: '0.2rem' }}
-                title={isScene ? 'Convert to playlist' : 'Convert to scene (designs only)'}
-                aria-label={`Convert ${p.name} to ${otherKind}`}
-                onClick={(e) => { e.stopPropagation(); guarded(() => onConvert(p.id, otherKind))(); }}
-              >
-                {CONVERT_ICON}
-              </button>
-            ),
           }))}
           selectedId={selectedPlaylist?.id}
           onSelect={(id) => { const p = playlists.find((x) => x.id === id); if (p) guarded(() => editor.load(p))(); }}
@@ -457,6 +441,20 @@ export default function PlaylistPanel({
                   >
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><circle cx="9" cy="6" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="18" r="1"/></svg>
                   </span>
+                  {inline && item.design_id && (
+                    // Disclosure triangle: shows the design's details (its editor) under the row
+                    <button
+                      type="button"
+                      className={`btn-icon playlist-item-disclosure${editing ? ' open' : ''}`}
+                      title={!itemDesign?.data ? 'This design can\'t be edited (missing or corrupt)' : editing ? 'Hide details' : 'Show details'}
+                      aria-label={`${editing ? 'Hide' : 'Show'} details for ${label}`}
+                      aria-expanded={editing}
+                      disabled={!itemDesign?.data}
+                      onClick={() => toggleInline(item.key)}
+                    >
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5l10 7-10 7z"/></svg>
+                    </button>
+                  )}
                   <span className="playlist-item-name">
                     {label}{' '}
                     {item.child_playlist_id
@@ -488,19 +486,6 @@ export default function PlaylistPanel({
                     <button type="button" className="btn-icon" ref={moveButtonRef(item.key, -1)} aria-label={`Move ${label} up`} disabled={idx === 0} onClick={() => move(item.key, -1)}>↑</button>
                     <button type="button" className="btn-icon" ref={moveButtonRef(item.key, 1)} aria-label={`Move ${label} down`} disabled={idx === items.length - 1} onClick={() => move(item.key, 1)}>↓</button>
                   </span>
-                  {inline && item.design_id && (
-                    <button
-                      className={`btn-icon playlist-item-edit${editing ? ' active' : ''}`}
-                      style={{ padding: '0.2rem' }}
-                      title={!itemDesign?.data ? 'This design can\'t be edited (missing or corrupt)' : editing ? 'Close the editor' : 'Edit this design here'}
-                      aria-label={`${editing ? 'Close editor for' : 'Edit'} ${label}`}
-                      aria-expanded={editing}
-                      disabled={!itemDesign?.data}
-                      onClick={() => toggleInline(item.key)}
-                    >
-                      {EDIT_ICON}
-                    </button>
-                  )}
                   <button className="btn-icon playlist-item-play" style={{ padding: '0.2rem' }} title="Play from here" aria-label={`Play from ${label}`} onClick={() => onPlay(idx)}>
                     {PLAY_ICON}
                   </button>

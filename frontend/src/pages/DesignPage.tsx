@@ -367,21 +367,6 @@ function DesignPage() {
     if (result === 'saved') setPlaylistSaveModal(null);
   };
 
-  // Converting keeps the items; the result opens in its new tab
-  const handleConvert = async (id: string, to: PlaylistKind) => {
-    const from = editorFor(to === 'scene' ? 'playlist' : 'scene');
-    try {
-      const converted = await playlistsAPI.convert(id, to);
-      if (from.selectedPlaylist?.id === id) from.startNew();
-      await loadData();
-      editorFor(to).load(converted);
-      setActiveTab(to === 'scene' ? 'scenes' : 'playlist');
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : `Failed to convert to ${to}`);
-    }
-  };
-
   // --- live preview ---
 
   const currentPreviewRequest = (): PreviewRequest | null => {
@@ -710,7 +695,6 @@ function DesignPage() {
           playlists={playlists}
           sidebarHeader={sidebarHeader}
           onSave={() => handleSavePlaylist(activeTab === 'scenes' ? 'scene' : 'playlist')}
-          onConvert={handleConvert}
           onMove={handleMovePlaylist}
           folders={folderControls}
           isPlaying={playback?.kind === listKind}

@@ -2452,3 +2452,20 @@ body {
   font-size: 0.7rem;
   color: var(--text-secondary);
 }
+
+.playlist-item-disclosure {
+  padding: 0.2rem;
+  color: var(--text-secondary);
+}
+
+.playlist-item-disclosure svg {
+  transition: transform 0.15s;
+}
+
+.playlist-item-disclosure.open {
+  color: var(--primary-color);
+}
+
+.playlist-item-disclosure.open svg {
+  transform: rotate(90deg);
+}
