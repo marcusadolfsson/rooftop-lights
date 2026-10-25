@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3';
 import path from 'path';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID as uuidv4 } from 'crypto';
 
 const DB_PATH = process.env.DATABASE_PATH || path.join(process.cwd(), 'data', 'rooftop-lights.db');
 
@@ -10,9 +10,24 @@ export function getDatabase(): Database.Database {
   if (!db) {
     db = new Database(DB_PATH);
     db.pragma('journal_mode = WAL');
+    // Enforce FOREIGN KEY clauses (incl. ON DELETE CASCADE / SET NULL). SQLite only
+    // checks constraints on writes, so pre-existing orphan rows don't break startup.
+    db.pragma('foreign_keys = ON');
     initializeTables();
+    reportForeignKeyViolations(db);
   }
   return db;
+}
+
+function reportForeignKeyViolations(database: Database.Database): void {
+  try {
+    const violations = database.pragma('foreign_key_check') as unknown[];
+    if (violations.length > 0) {
+      console.warn(`Database has ${violations.length} orphaned row(s) violating foreign keys (left as-is):`, violations.slice(0, 10));
+    }
+  } catch (err) {
+    console.warn('foreign_key_check failed:', err);
+  }
 }
 
 function initializeTables(): void {
@@ -161,7 +176,7 @@ function initializeTables(): void {
   // Initialize default walls if not exists
   const wallCount = database.prepare('SELECT COUNT(*) as count FROM walls').get() as { count: number };
   if (wallCount.count === 0) {
-    initializeDefaultLayout(database);
+    database.transaction(() => initializeDefaultLayout(database))();
   }
 }
 

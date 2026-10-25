@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { getScheduler } from '../scheduler/scheduler.js';
 import { getDatabase } from '../models/database.js';
+import { validateDesign, validateMotionData, safeParseJSON } from '../services/designValidation.js';
 
 const router = Router();
 
@@ -19,7 +20,7 @@ router.get('/status', (req: Request, res: Response) => {
 router.post('/start', (req: Request, res: Response) => {
   const db = getDatabase();
   const scheduler = getScheduler();
-  const { designId, designType, designData, live = true } = req.body;
+  const { designId, designType, designData, live = true } = req.body ?? {};
 
   let type: string;
   let data: unknown;
@@ -38,9 +39,19 @@ router.post('/start', (req: Request, res: Response) => {
     }
 
     type = design.type;
-    data = JSON.parse(design.data);
+    data = safeParseJSON(design.data);
+    if (data === null) {
+      res.status(422).json({ error: 'Stored design data is corrupt (invalid JSON) and cannot be previewed' });
+      return;
+    }
   } else {
     res.status(400).json({ error: 'Either designId or designData is required' });
+    return;
+  }
+
+  const check = validateDesign(type, data);
+  if (!check.ok) {
+    res.status(400).json({ error: check.error });
     return;
   }
 
@@ -59,7 +70,12 @@ router.post('/start', (req: Request, res: Response) => {
 router.post('/playlist', (req: Request, res: Response) => {
   const db = getDatabase();
   const scheduler = getScheduler();
-  const { playlistId } = req.body;
+  const { playlistId } = req.body ?? {};
+
+  if (typeof playlistId !== 'string' || !playlistId) {
+    res.status(400).json({ error: 'playlistId is required' });
+    return;
+  }
 
   const playlist = db.prepare('SELECT * FROM playlists WHERE id = ?').get(playlistId) as any;
 
@@ -68,8 +84,7 @@ router.post('/playlist', (req: Request, res: Response) => {
     return;
   }
 
-  // For playlist preview, we use the scheduler's playlist rendering
-  // This is a bit of a hack - we temporarily set it as the active schedule
+  // Rendered by the scheduler's playlist player (renderDesign 'playlist' branch)
   scheduler.setLivePreview(true, {
     type: 'playlist',
     data: { playlistId },
@@ -99,7 +114,7 @@ router.post('/clear-soft', (req: Request, res: Response) => {
 // Preview a static color on specific lights
 router.post('/lights', (req: Request, res: Response) => {
   const scheduler = getScheduler();
-  const { lights } = req.body; // Array of { light_id, r, g, b, w }
+  const { lights } = req.body ?? {}; // Array of { light_id, r, g, b, w }
 
   if (!lights || !Array.isArray(lights)) {
     res.status(400).json({ error: 'lights array is required' });
@@ -109,12 +124,22 @@ router.post('/lights', (req: Request, res: Response) => {
   // Create a static design from the lights data
   const colors: Record<number, { r: number; g: number; b: number; w: number }> = {};
   for (const light of lights) {
+    if (!light || typeof light !== 'object' || !Number.isInteger(light.light_id) || light.light_id < 0) {
+      res.status(400).json({ error: 'Each light needs an integer light_id' });
+      return;
+    }
     colors[light.light_id] = {
       r: light.r || 0,
       g: light.g || 0,
       b: light.b || 0,
       w: light.w || 0,
     };
+  }
+
+  const check = validateDesign('static', { colors });
+  if (!check.ok) {
+    res.status(400).json({ error: check.error });
+    return;
   }
 
   const live = req.body.live !== undefined ? req.body.live : true;
@@ -131,7 +156,7 @@ router.post('/lights', (req: Request, res: Response) => {
 // Preview a motion effect (live=true sends to ArtNet, live=false is WebSocket only)
 router.post('/effect', (req: Request, res: Response) => {
   const scheduler = getScheduler();
-  const { effectType, colors, params, speed, scope, live = true } = req.body;
+  const { effectType, colors, params, speed, scope, live = true } = req.body ?? {};
 
   if (!effectType) {
     res.status(400).json({ error: 'effectType is required' });
@@ -149,6 +174,11 @@ router.post('/effect', (req: Request, res: Response) => {
     },
   };
 
+  const check = validateMotionData(design.data);
+  if (!check.ok) {
+    res.status(400).json({ error: check.error });
+    return;
+  }
 
   if (live) {
     scheduler.setLivePreview(true, design);

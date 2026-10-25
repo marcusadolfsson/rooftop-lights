@@ -1,7 +1,114 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { getDatabase } from '../models/database.js';
+import { safeParseJSON } from './designValidation.js';
 
-const anthropic = new Anthropic();
+// Created lazily so the server starts (and non-AI routes work) without credentials
+let anthropic: Anthropic | null = null;
+function client(): Anthropic {
+  if (!anthropic) anthropic = new Anthropic();
+  return anthropic;
+}
+
+// Override with ANTHROPIC_MODEL to use a different Claude model
+const DEFAULT_MODEL = 'claude-sonnet-5-5';
+function modelId(): string {
+  return process.env.ANTHROPIC_MODEL?.trim() || DEFAULT_MODEL;
+}
+
+// Models that accept the server-side `fallbacks: "default"` parameter (Claude API).
+// On a safety-classifier decline the API re-runs the request on Anthropic's
+// recommended fallback model instead of returning a refusal.
+const SERVER_FALLBACK_MODELS = new Set(['claude-sonnet-5-5', 'claude-opus-5-5', 'claude-opus-5', 'claude-fable-5-1']);
+
+const COLOR_SCHEMA = {
+  type: 'object',
+  properties: {
+    r: { type: 'integer' },
+    g: { type: 'integer' },
+    b: { type: 'integer' },
+    w: { type: 'integer' },
+  },
+  required: ['r', 'g', 'b', 'w'],
+  additionalProperties: false,
+} as const;
+
+// Structured-output schema. One flat object (static fields null for motion and
+// vice versa) because wall names are data, not fixed keys, and the schema
+// language requires additionalProperties: false on every object.
+const DESIGN_OUTPUT_SCHEMA = {
+  type: 'object',
+  properties: {
+    type: { type: 'string', enum: ['static', 'motion'] },
+    name: { type: 'string' },
+    walls: {
+      anyOf: [
+        {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              wall: { type: 'string' },
+              rows: { type: 'array', items: { type: 'array', items: COLOR_SCHEMA } },
+            },
+            required: ['wall', 'rows'],
+            additionalProperties: false,
+          },
+        },
+        { type: 'null' },
+      ],
+    },
+    colors: { anyOf: [{ type: 'array', items: COLOR_SCHEMA }, { type: 'null' }] },
+    speed: { anyOf: [{ type: 'number' }, { type: 'null' }] },
+    scope: { anyOf: [{ type: 'string', enum: ['all', 'wall', 'group'] }, { type: 'null' }] },
+    code: { anyOf: [{ type: 'string' }, { type: 'null' }] },
+  },
+  required: ['type', 'name', 'walls', 'colors', 'speed', 'scope', 'code'],
+  additionalProperties: false,
+} as const;
+
+/**
+ * Parse the model's JSON. Structured outputs guarantee valid JSON, but keep a
+ * tolerant fallback (markdown fences, leading prose) for models/configs where
+ * output_config.format is not applied.
+ */
+function parseModelJSON(text: string): Record<string, unknown> {
+  const attempts: string[] = [text.trim()];
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fenced) attempts.push(fenced[1].trim());
+  const first = text.indexOf('{');
+  const last = text.lastIndexOf('}');
+  if (first !== -1 && last > first) attempts.push(text.slice(first, last + 1));
+  for (const candidate of attempts) {
+    try {
+      const parsed: unknown = JSON.parse(candidate);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed as Record<string, unknown>;
+    } catch {
+      // try next candidate
+    }
+  }
+  throw new Error('Failed to parse AI response as JSON');
+}
+
+/** Map the structured-output shape onto the legacy shape the converter below expects. */
+function normalizeModelOutput(raw: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...raw };
+  if (Array.isArray(raw.walls)) {
+    const grids: Record<string, unknown> = {};
+    for (const entry of raw.walls as Array<{ wall?: unknown; rows?: unknown }>) {
+      if (entry && typeof entry.wall === 'string') grids[entry.wall] = entry.rows;
+    }
+    out.walls = grids;
+  }
+  if (typeof raw.code === 'string') {
+    const params = (raw.params && typeof raw.params === 'object' ? raw.params : {}) as Record<string, unknown>;
+    out.params = { ...params, code: raw.code };
+  }
+  delete out.code;
+  for (const k of ['colors', 'speed', 'scope', 'walls'] as const) {
+    if (out[k] === null) delete out[k];
+  }
+  return out;
+}
 
 interface RGBWColor {
   r: number;
@@ -13,7 +120,9 @@ interface RGBWColor {
 interface StaticDesign {
   type: 'static';
   name: string;
-  colors: RGBWColor[];
+  // Keyed by light_id (not an array indexed by light_id-1, which dropped lights
+  // whose ids exceed the light count)
+  colors: Record<number, RGBWColor>;
 }
 
 interface MotionDesign {
@@ -147,7 +256,7 @@ RULES:
 2. Reference ctx.colors[0], ctx.colors[1] etc so the user can edit colors after generation.
 3. Use ctx.frame for all animation timing. Do NOT use Date.now() or Math.random() (use deterministic pseudo-random based on frame + light id instead).
 4. Available: Math.sin, Math.cos, Math.floor, Math.ceil, Math.round, Math.abs, Math.min, Math.max, Math.PI, Math.sqrt, Math.pow, parseInt, parseFloat.
-5. No imports, fetch, setTimeout, setInterval, or async. Pure computation only.
+5. No imports, fetch, setTimeout, setInterval, eval, or async. Pure computation only. ctx and everything in it is read-only (frozen) - build a new output object. Each frame must finish within a few milliseconds; code that runs too long or throws is disabled for a few seconds.
 6. Keep code concise. Use \\n for newlines in the JSON string.
 
 EXAMPLE — Scope-aware bouncing comet (works with all/wall/group):
@@ -168,12 +277,16 @@ function getExistingDesignsContext(): string {
   }
 
   const designSummaries = designs.map(d => {
-    const data = JSON.parse(d.data);
+    const data = safeParseJSON(d.data) as Record<string, any> | null;
+    if (!data || typeof data !== 'object') {
+      // One corrupt row must not break generation for everything else
+      return `  - "${d.name}" (id: ${d.id}) [${d.type}] - (data unreadable)`;
+    }
     if (d.type === 'static') {
       // Summarize static design - show a sample of colors
-      const colors = data.colors as Record<number, RGBWColor> | RGBWColor[];
-      const colorArray = Array.isArray(colors) ? colors : Object.values(colors);
-      const sample = colorArray.slice(0, 3).map((c: RGBWColor) =>
+      const colors = data.colors as Record<number, RGBWColor> | RGBWColor[] | undefined;
+      const colorArray = Array.isArray(colors) ? colors : (colors && typeof colors === 'object' ? Object.values(colors) : []);
+      const sample = colorArray.slice(0, 3).filter(Boolean).map((c: RGBWColor) =>
         `rgba(${c.r},${c.g},${c.b},${c.w})`
       ).join(', ');
       return `  - "${d.name}" (id: ${d.id}) [static] - Sample colors: ${sample}...`;
@@ -197,10 +310,9 @@ function getDesignById(designId: string): { design: StoredDesign; data: unknown 
 
   if (!design) return null;
 
-  return {
-    design,
-    data: JSON.parse(design.data)
-  };
+  const data = safeParseJSON(design.data);
+  if (data === null) return null;
+  return { design, data };
 }
 
 export interface GenerateOptions {
@@ -232,8 +344,6 @@ export async function generateDesignFromDescription(
 
   const { description, baseDesignId, mode = 'create', currentDesignData } = options;
 
-  const db = getDatabase();
-  const totalLights = (db.prepare('SELECT COUNT(*) as count FROM lights').get() as { count: number }).count;
   const layoutContext = getLightLayoutContext();
   const existingDesignsContext = getExistingDesignsContext();
 
@@ -288,7 +398,7 @@ INSTRUCTIONS:
 3. Decide if this should be a STATIC design (fixed colors) or MOTION design (animated effect)
 4. Generate the appropriate JSON response
 
-For STATIC designs, specify colors PER WALL as a 2D grid: walls[wallName][y][x] = color.
+For STATIC designs, specify colors PER WALL as a 2D grid: one entry per wall in "walls", where rows[y][x] = color.
 Each wall grid is an array of rows (y=0 first, y=2 last). Each row is an array of colors (x=0 to x=width-1).
 
 GRID LAYOUT (critical — get this right):
@@ -317,38 +427,37 @@ Think about:
 - Appropriate colors that match the mood/theme
 - Speed and intensity settings
 
-RESPONSE FORMAT (JSON only, no markdown):
+RESPONSE FORMAT (a single JSON object; every field is present, unused ones are null):
 For static:
 {
   "type": "static",
   "name": "Descriptive Name",
-  "walls": {
-    "West": [
+  "walls": [
+    { "wall": "West", "rows": [
       [color_y0_x0, color_y0_x1, ...],  // row y=0 (bottom), 13 colors
       [color_y1_x0, color_y1_x1, ...],  // row y=1 (middle), 13 colors
       [color_y2_x0, color_y2_x1, ...]   // row y=2 (top), 13 colors
-    ],
-    "North": [ [3 colors], [3 colors], [3 colors] ],
-    "East":  [ [13 colors], [13 colors], [13 colors] ],
-    "South": [ [3 colors], [3 colors], [3 colors] ]
-  }
+    ] },
+    { "wall": "North", "rows": [ [3 colors], [3 colors], [3 colors] ] },
+    { "wall": "East",  "rows": [ [13 colors], [13 colors], [13 colors] ] },
+    { "wall": "South", "rows": [ [3 colors], [3 colors], [3 colors] ] }
+  ],
+  "colors": null, "speed": null, "scope": null, "code": null
 }
-Each color is {"r":0,"g":0,"b":0,"w":0}. Rows go from y=0 (bottom) to y=2 (top).
+Each color is {"r":0,"g":0,"b":0,"w":0} with integer values 0-255. Rows go from y=0 (bottom) to y=2 (top).
 
-For motion:
+For motion (always the "ai" effect; "code" is the function body described above):
 {
   "type": "motion",
   "name": "Descriptive Name",
-  "effect": "ai",
+  "walls": null,
   "colors": [
     {"r":255,"g":0,"b":0,"w":0},
     {"r":0,"g":0,"b":0,"w":255}
   ],
   "speed": 1.0,
   "scope": "all",
-  "params": {
-    "code": "var out = {};\\nvar c = ctx.colors[0] || {r:255,g:0,b:0,w:0};\\n...\\nreturn out;"
-  }
+  "code": "var out = {};\\nvar c = ctx.colors[0] || {r:255,g:0,b:0,w:0};\\n...\\nreturn out;"
 }
 
 For concrete requests (flags, named patterns): prioritize ACCURACY over creativity. Get the colors and positions RIGHT.
@@ -360,42 +469,41 @@ ${baseDesignId ? `Remember: You are ${mode === 'modify' ? 'modifying' : 'creatin
       ? `${mode === 'modify' ? 'Modify' : 'Create a variation of'} the design "${baseDesignId}": ${description}`
       : `Create a light design for: "${description}"`;
 
-    const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-5-20250929',
-      max_tokens: 8192,
-      messages: [
-        {
-          role: 'user',
-          content: userMessage
-        }
-      ],
-      system: systemPrompt
-    });
+    const model = modelId();
+    const useFallbacks = SERVER_FALLBACK_MODELS.has(model);
+
+    // Streaming + finalMessage(): generous max_tokens without HTTP timeouts.
+    // output_config.format constrains the reply to DESIGN_OUTPUT_SCHEMA.
+    const response = await client().beta.messages.stream({
+      model,
+      max_tokens: 32000,
+      system: systemPrompt,
+      messages: [{ role: 'user', content: userMessage }],
+      output_config: {
+        format: { type: 'json_schema', schema: DESIGN_OUTPUT_SCHEMA as unknown as Record<string, unknown> },
+      },
+      ...(useFallbacks
+        ? { betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' as const }
+        : {}),
+    }).finalMessage();
+
+    if (response.stop_reason === 'refusal') {
+      throw new Error('The AI declined to generate this design. Try rephrasing the request.');
+    }
+    if (response.stop_reason === 'max_tokens') {
+      throw new Error('AI response was cut off (too long). Try a simpler request.');
+    }
 
     // Extract text content from response
-    const textContent = response.content.find(c => c.type === 'text');
-    if (!textContent || textContent.type !== 'text') {
+    const text = response.content
+      .filter((c): c is Extract<typeof c, { type: 'text' }> => c.type === 'text')
+      .map(c => c.text)
+      .join('');
+    if (!text.trim()) {
       throw new Error('No text response from AI');
     }
 
-    // Parse the JSON response
-    let rawData: Record<string, unknown>;
-    try {
-      // Clean up potential markdown formatting
-      let jsonStr = textContent.text.trim();
-      if (jsonStr.startsWith('```json')) {
-        jsonStr = jsonStr.slice(7);
-      }
-      if (jsonStr.startsWith('```')) {
-        jsonStr = jsonStr.slice(3);
-      }
-      if (jsonStr.endsWith('```')) {
-        jsonStr = jsonStr.slice(0, -3);
-      }
-      rawData = JSON.parse(jsonStr.trim());
-    } catch {
-      throw new Error('Failed to parse AI response as JSON');
-    }
+    const rawData = normalizeModelOutput(parseModelJSON(text));
 
     let designData: GeneratedDesign;
     const { walls, lights } = getLayoutData();
@@ -438,17 +546,14 @@ ${baseDesignId ? `Remember: You are ${mode === 'modify' ? 'modifying' : 'creatin
         }
       }
 
-      // Convert to light_id color map, then to array
+      // Convert to a color map keyed by light_id (covers every configured light,
+      // whatever its id)
       const colorMap = wallGridToColorMap(wallGrids, walls, lights);
-      const colorArray: RGBWColor[] = [];
-      for (let i = 1; i <= totalLights; i++) {
-        colorArray.push(colorMap[i] || { r: 0, g: 0, b: 0, w: 0 });
-      }
 
       designData = {
         type: 'static',
         name: (rawData.name as string) || 'AI Design',
-        colors: colorArray,
+        colors: colorMap,
       };
     } else if (rawData.type === 'motion') {
       designData = rawData as unknown as MotionDesign;

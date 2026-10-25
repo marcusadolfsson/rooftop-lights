@@ -1,4 +1,5 @@
 import { getDatabase } from '../models/database.js';
+import { AICodeRunner, AILayout } from './aiSandbox.js';
 
 export interface RGBW {
   r: number;
@@ -39,6 +40,51 @@ export interface MotionEffect {
 
 export interface StaticDesign {
   colors: Record<number, RGBW>; // light_id -> color
+}
+
+const BLACK: RGBW = { r: 0, g: 0, b: 0, w: 0 };
+const MAX_TEXT_LENGTH = 500;
+
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
+function toByte(v: unknown): number {
+  const n = typeof v === 'number' ? v : Number(v);
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(0, Math.min(255, n));
+}
+
+/** Coerce anything color-like into a valid RGBW (missing/invalid channels -> 0). */
+export function toRGBW(c: unknown): RGBW {
+  if (!isPlainObject(c)) return { ...BLACK };
+  return { r: toByte(c.r), g: toByte(c.g), b: toByte(c.b), w: toByte(c.w) };
+}
+
+/** Read a numeric param, falling back to `def` and clamping into [min, max]. */
+function num(v: unknown, def: number, min: number, max: number): number {
+  const n = typeof v === 'number' ? v : (typeof v === 'string' && v.trim() !== '' ? Number(v) : NaN);
+  if (!Number.isFinite(n)) return def;
+  return Math.max(min, Math.min(max, n));
+}
+
+function bool(v: unknown, def: boolean): boolean {
+  return typeof v === 'boolean' ? v : def;
+}
+
+/** Make a motion effect safe to render: colors array of RGBW, params object, valid scope. */
+export function normalizeMotionEffect(effect: unknown): MotionEffect {
+  const e = isPlainObject(effect) ? effect : {};
+  const colors = Array.isArray(e.colors) ? e.colors.filter(isPlainObject).map(toRGBW) : [];
+  const scope = e.scope === 'wall' || e.scope === 'group' ? e.scope : 'all';
+  return {
+    type: typeof e.type === 'string' ? e.type : '',
+    speed: num(e.speed, 1, 0.01, 100),
+    colors,
+    scope,
+    wallIds: Array.isArray(e.wallIds) ? e.wallIds as string[] : undefined,
+    params: isPlainObject(e.params) ? e.params : {},
+  };
 }
 
 // 3-row pixel font: each character is an array of 3 rows, each row is an array of 0/1
@@ -98,8 +144,7 @@ export class EffectEngine {
   private walls: Wall[] = [];
   private lights: Light[] = [];
   private lightMatrix: Map<string, Light[][]> = new Map(); // wall_id -> 2D array
-  private aiCodeCache: Map<string, Function> = new Map();
-  private aiLightContext: any[] | null = null;
+  private aiRunner = new AICodeRunner();
 
   constructor() {
     this.loadLayout();
@@ -127,8 +172,7 @@ export class EffectEngine {
       }
       this.lightMatrix.set(wall.id, matrix);
     }
-    this.aiLightContext = null;
-    this.aiCodeCache.clear();
+    this.aiRunner.setLayout(this.buildAILayout());
   }
 
   // Get all lights in a continuous row (considering wall connections)
@@ -137,7 +181,8 @@ export class EffectEngine {
     for (const wall of this.walls) {
       const matrix = this.lightMatrix.get(wall.id);
       if (matrix && matrix[y]) {
-        row.push(...matrix[y]);
+        // Skip holes (matrix positions with no light configured)
+        for (const light of matrix[y]) if (light) row.push(light);
       }
     }
     return row;
@@ -148,7 +193,7 @@ export class EffectEngine {
     if (scope === 'wall') {
       return this.walls.map(wall => {
         const matrix = this.lightMatrix.get(wall.id);
-        return matrix && matrix[y] ? [...matrix[y]] : [];
+        return matrix && matrix[y] ? matrix[y].filter(Boolean) : [];
       }).filter(row => row.length > 0);
     }
     if (scope === 'group') {
@@ -157,7 +202,7 @@ export class EffectEngine {
       const groupMap = new Map<string, Light[]>();
       for (const wall of this.walls) {
         const matrix = this.lightMatrix.get(wall.id);
-        const row = matrix && matrix[y] ? [...matrix[y]] : [];
+        const row = matrix && matrix[y] ? matrix[y].filter(Boolean) : [];
         if (row.length === 0) continue;
         if (wall.group_id) {
           const existing = groupMap.get(wall.group_id);
@@ -174,23 +219,26 @@ export class EffectEngine {
       }
       return segments;
     }
-    return [this.getContinuousRow(y)];
+    const row = this.getContinuousRow(y);
+    return row.length > 0 ? [row] : [];
   }
 
   // Generate frame for static design
   generateStaticFrame(design: StaticDesign): Map<number, RGBW> {
     const frame = new Map<number, RGBW>();
+    const colors = isPlainObject(design?.colors) ? design.colors : {};
     for (const light of this.lights) {
-      const color = design.colors[light.light_id] || { r: 0, g: 0, b: 0, w: 0 };
-      frame.set(light.light_id, color);
+      const color = colors[light.light_id];
+      frame.set(light.light_id, color ? toRGBW(color) : { ...BLACK });
     }
     return frame;
   }
 
   // Generate frame for motion effect
-  generateMotionFrame(effect: MotionEffect, frameNum: number): Map<number, RGBW> {
+  generateMotionFrame(rawEffect: MotionEffect, frameNum: number): Map<number, RGBW> {
     this.currentFrame = frameNum;
     const frame = new Map<number, RGBW>();
+    const effect = normalizeMotionEffect(rawEffect);
 
     switch (effect.type) {
       case 'candy_cane':
@@ -227,8 +275,8 @@ export class EffectEngine {
     const frame = new Map<number, RGBW>();
     const color1: RGBW = effect.colors[0] || { r: 255, g: 0, b: 0, w: 0 };
     const color2: RGBW = effect.colors[1] || { r: 0, g: 0, b: 0, w: 255 };
-    const width1 = (effect.params?.width1 as number) || 4;
-    const width2 = (effect.params?.width2 as number) || 4;
+    const width1 = Math.round(num(effect.params?.width1 || 4, 4, 1, 100));
+    const width2 = Math.round(num(effect.params?.width2 || 4, 4, 1, 100));
     const period = width1 + width2;
     const step = Math.floor(frameNum / 15);
 
@@ -270,9 +318,9 @@ export class EffectEngine {
     const frame = new Map<number, RGBW>();
     const headColor: RGBW = effect.colors[0] || { r: 0, g: 0, b: 0, w: 255 };
     const tailColor: RGBW = effect.colors[1] || headColor;
-    const tailLength = (effect.params?.tailLength as number) || 8;
-    const reverse = (effect.params?.reverse as boolean) || false;
-    const bounce = effect.params?.bounce !== undefined ? (effect.params.bounce as boolean) : true;
+    const tailLength = Math.round(num(effect.params?.tailLength || 8, 8, 1, 200));
+    const reverse = bool(effect.params?.reverse, false);
+    const bounce = bool(effect.params?.bounce, true);
     const step = Math.floor(frameNum / 4);
 
     // Initialize all to off
@@ -331,8 +379,8 @@ export class EffectEngine {
   private generateSparkle(effect: MotionEffect, frameNum: number): Map<number, RGBW> {
     const frame = new Map<number, RGBW>();
     const sparkleColor: RGBW = effect.colors[0] || { r: 0, g: 0, b: 0, w: 255 };
-    const density = (effect.params?.density as number) || 0.15;
-    const fadeSpeed = (effect.params?.fadeSpeed as number) || 0.3;
+    const density = num(effect.params?.density || 0.15, 0.15, 0, 1);
+    const fadeSpeed = num(effect.params?.fadeSpeed || 0.3, 0.3, 0.001, 10);
 
     // Use deterministic random based on frame for consistent playback
     const seed = frameNum * 12345;
@@ -381,9 +429,9 @@ export class EffectEngine {
   private generateWave(effect: MotionEffect, frameNum: number): Map<number, RGBW> {
     const frame = new Map<number, RGBW>();
     const colors = effect.colors.length > 0 ? effect.colors : [{ r: 0, g: 0, b: 0, w: 255 }];
-    const wavelength = (effect.params?.wavelength as number) || 10;
-    const bounce = (effect.params?.bounce as boolean) || false;
-    const waveHeight = (effect.params?.waveHeight as number) ?? 1.0;
+    const wavelength = num(effect.params?.wavelength || 10, 10, 0.5, 1000);
+    const bounce = bool(effect.params?.bounce, false);
+    const waveHeight = num(effect.params?.waveHeight, 1.0, 0, 2);
 
     for (let y = 0; y < 3; y++) {
       for (const row of this.getSegments(y, effect.scope)) {
@@ -445,7 +493,7 @@ export class EffectEngine {
   private generateChase(effect: MotionEffect, frameNum: number): Map<number, RGBW> {
     const frame = new Map<number, RGBW>();
     const chaseColor: RGBW = effect.colors[0] || { r: 0, g: 0, b: 0, w: 255 };
-    const groupSize = (effect.params?.groupSize as number) || 3;
+    const groupSize = Math.round(num(effect.params?.groupSize || 3, 3, 1, 1000));
     const step = Math.floor(frameNum / 4);
 
     // Initialize all to off
@@ -457,7 +505,7 @@ export class EffectEngine {
       for (const row of this.getSegments(y, effect.scope)) {
         const pos = step % row.length;
 
-        for (let g = 0; g < groupSize; g++) {
+        for (let g = 0; g < Math.min(groupSize, row.length); g++) {
           const idx = (pos + g) % row.length;
           frame.set(row[idx].light_id, chaseColor);
         }
@@ -471,7 +519,7 @@ export class EffectEngine {
   private generateBreathe(effect: MotionEffect, frameNum: number): Map<number, RGBW> {
     const frame = new Map<number, RGBW>();
     const breatheColor: RGBW = effect.colors[0] || { r: 0, g: 0, b: 0, w: 255 };
-    const speed = (effect.params?.speed as number) || 0.05;
+    const speed = num(effect.params?.speed || 0.05, 0.05, 0.0001, 10);
 
     const brightness = Math.sin(frameNum * speed) * 0.5 + 0.5;
 
@@ -491,7 +539,8 @@ export class EffectEngine {
   private generateText(effect: MotionEffect, frameNum: number): Map<number, RGBW> {
     const frame = new Map<number, RGBW>();
     const textColor: RGBW = effect.colors[0] || { r: 0, g: 0, b: 0, w: 255 };
-    const text = ((effect.params?.text as string) || 'HELLO').toUpperCase();
+    const text = (typeof effect.params?.text === 'string' && effect.params.text ? effect.params.text : 'HELLO')
+      .slice(0, MAX_TEXT_LENGTH).toUpperCase();
     const step = Math.floor(frameNum / 6);
 
     // Initialize all to off
@@ -539,75 +588,42 @@ export class EffectEngine {
     return rows;
   }
 
-  // AI - executes custom JavaScript animation code generated by AI
+  // AI - executes custom JavaScript animation code generated by AI, inside a
+  // node:vm sandbox with a per-frame timeout (see aiSandbox.ts)
   private generateAI(effect: MotionEffect, frameNum: number): Map<number, RGBW> {
     const frame = new Map<number, RGBW>();
-    const code = effect.params?.code as string;
+    const code = typeof effect.params?.code === 'string' ? effect.params.code : '';
 
     // Fallback: no code, fill with first color
-    if (!code) {
-      const color = effect.colors[0] || { r: 0, g: 0, b: 0, w: 0 };
+    if (!code.trim()) {
+      const color = effect.colors[0] || BLACK;
       for (const light of this.lights) {
         frame.set(light.light_id, { ...color });
       }
       return frame;
     }
 
-    // Compile function (cached by code string)
-    let fn = this.aiCodeCache.get(code);
-    if (!fn) {
-      try {
-        fn = new Function('ctx', code);
-        this.aiCodeCache.set(code, fn);
-      } catch {
-        for (const light of this.lights) {
-          frame.set(light.light_id, { r: 0, g: 0, b: 0, w: 0 });
-        }
-        return frame;
-      }
+    const result = this.aiRunner.run(code, frameNum, effect.colors, effect.scope || 'all');
+    if (!result) {
+      // Compile/runtime error, timeout, or temporarily disabled — blank frame
+      for (const light of this.lights) frame.set(light.light_id, { ...BLACK });
+      return frame;
     }
 
-    // Build context for the AI code
-    const ctx = {
-      frame: frameNum,
-      colors: effect.colors,
-      scope: effect.scope || 'all',
-      lights: this.getAILightContext(),
-      walls: this.walls.map(w => ({ name: w.name, width: w.width, height: w.height, groupId: w.group_id })),
-      width: this.walls.reduce((s, w) => s + w.width, 0),
-      height: Math.max(...this.walls.map(w => w.height)),
-    };
-
-    try {
-      const result = fn(ctx) as Record<number, RGBW>;
-      if (result && typeof result === 'object') {
-        for (const [id, color] of Object.entries(result)) {
-          const lightId = parseInt(id);
-          if (!isNaN(lightId) && color) {
-            frame.set(lightId, {
-              r: Math.max(0, Math.min(255, Math.round(color.r || 0))),
-              g: Math.max(0, Math.min(255, Math.round(color.g || 0))),
-              b: Math.max(0, Math.min(255, Math.round(color.b || 0))),
-              w: Math.max(0, Math.min(255, Math.round(color.w || 0))),
-            });
-          }
-        }
-      }
-    } catch {
-      // Runtime error — blank frame
-      for (const light of this.lights) {
-        frame.set(light.light_id, { r: 0, g: 0, b: 0, w: 0 });
+    for (const [id, color] of Object.entries(result)) {
+      const lightId = parseInt(id, 10);
+      if (!isNaN(lightId) && color) {
+        const c = toRGBW(color);
+        frame.set(lightId, { r: Math.round(c.r), g: Math.round(c.g), b: Math.round(c.b), w: Math.round(c.w) });
       }
     }
 
     return frame;
   }
 
-  // Precomputed light context for AI code (cached, invalidated on layout reload)
-  private getAILightContext(): any[] {
-    if (this.aiLightContext) return this.aiLightContext;
-
-    const result: any[] = [];
+  // Light/wall context handed to AI code (rebuilt on layout reload)
+  private buildAILayout(): AILayout {
+    const lights: AILayout['lights'] = [];
     let cx = 0;
     for (let wallIdx = 0; wallIdx < this.walls.length; wallIdx++) {
       const wall = this.walls[wallIdx];
@@ -617,20 +633,18 @@ export class EffectEngine {
         for (let x = 0; x < wall.width; x++) {
           const light = matrix[y]?.[x];
           if (light) {
-            result.push({
-              id: light.light_id,
-              x,
-              y,
-              wallIndex: wallIdx,
-              cx: cx + x,
-            });
+            lights.push({ id: light.light_id, x, y, wallIndex: wallIdx, cx: cx + x });
           }
         }
       }
       cx += wall.width;
     }
-    this.aiLightContext = result;
-    return result;
+    return {
+      lights,
+      walls: this.walls.map(w => ({ name: w.name, width: w.width, height: w.height, groupId: w.group_id })),
+      width: this.walls.reduce((s, w) => s + w.width, 0),
+      height: this.walls.reduce((m, w) => Math.max(m, w.height), 0),
+    };
   }
 
   // Helper: Convert HSL to RGB

@@ -1,6 +1,9 @@
-FROM node:20-alpine
+FROM node:24-alpine
 
 WORKDIR /app
+
+# Build tools for better-sqlite3 (if no prebuilt binary), tzdata so TZ works, curl for health check
+RUN apk add --no-cache python3 make g++ tzdata curl
 
 # Copy package files for both backend and frontend
 COPY backend/package*.json ./backend/
@@ -14,9 +17,6 @@ RUN npm install -g concurrently
 # Copy source (will be overridden by volume mounts)
 COPY backend/ ./backend/
 COPY frontend/ ./frontend/
-
-# Install curl for health check
-RUN apk add --no-cache curl
 
 # Expose ports: 3030 (web), 6454 (ArtNet)
 EXPOSE 3030

@@ -1,9 +1,29 @@
 import { Router, Request, Response } from 'express';
 import { getDatabase } from '../models/database.js';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID as uuidv4 } from 'crypto';
 import { generateDesignFromDescription } from '../services/aiDesigner.js';
+import { validateDesign, safeParseJSON } from '../services/designValidation.js';
+import { invalidateSchedule } from '../scheduler/scheduler.js';
 
 const router = Router();
+
+const MAX_NAME_LENGTH = 200;
+
+function validateName(name: unknown): string | null {
+  if (typeof name !== 'string' || !name.trim()) return 'Design "name" is required';
+  if (name.length > MAX_NAME_LENGTH) return `Design name too long (max ${MAX_NAME_LENGTH} characters)`;
+  return null;
+}
+
+// Parse a row's JSON data; a corrupt row is returned with data: null and
+// dataError set instead of failing the whole request.
+function parseRow(d: any) {
+  const data = safeParseJSON(d.data);
+  if (data === null) {
+    return { ...d, data: null, dataError: 'Stored design data is not valid JSON' };
+  }
+  return { ...d, data };
+}
 
 // Get all designs
 router.get('/', (req: Request, res: Response) => {
@@ -17,13 +37,8 @@ router.get('/', (req: Request, res: Response) => {
     designs = db.prepare('SELECT * FROM designs ORDER BY name').all();
   }
 
-  // Parse data JSON for each design
-  const parsedDesigns = designs.map((d: any) => ({
-    ...d,
-    data: JSON.parse(d.data),
-  }));
-
-  res.json(parsedDesigns);
+  // Parse data JSON for each design (corrupt rows are flagged, not fatal)
+  res.json(designs.map(parseRow));
 });
 
 // Get a single design
@@ -38,16 +53,25 @@ router.get('/:id', (req: Request, res: Response) => {
     return;
   }
 
-  res.json({
-    ...design,
-    data: JSON.parse(design.data),
-  });
+  res.json(parseRow(design));
 });
 
 // Create a new design
 router.post('/', (req: Request, res: Response) => {
   const db = getDatabase();
-  const { name, type, data } = req.body;
+  const { name, type, data } = req.body ?? {};
+
+  const nameError = validateName(name);
+  if (nameError) {
+    res.status(400).json({ error: nameError });
+    return;
+  }
+  const check = validateDesign(type, data);
+  if (!check.ok) {
+    res.status(400).json({ error: check.error });
+    return;
+  }
+
   const id = uuidv4();
 
   db.prepare(`
@@ -55,6 +79,7 @@ router.post('/', (req: Request, res: Response) => {
     VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))
   `).run(id, name, type, JSON.stringify(data));
 
+  invalidateSchedule();
   res.json({ id, name, type, data });
 });
 
@@ -62,13 +87,31 @@ router.post('/', (req: Request, res: Response) => {
 router.put('/:id', (req: Request, res: Response) => {
   const db = getDatabase();
   const { id } = req.params;
-  const { name, data } = req.body;
+  const { name, data } = req.body ?? {};
+
+  const existing = db.prepare('SELECT type FROM designs WHERE id = ?').get(id) as { type: string } | undefined;
+  if (!existing) {
+    res.status(404).json({ error: 'Design not found' });
+    return;
+  }
+
+  const nameError = validateName(name);
+  if (nameError) {
+    res.status(400).json({ error: nameError });
+    return;
+  }
+  const check = validateDesign(existing.type, data);
+  if (!check.ok) {
+    res.status(400).json({ error: check.error });
+    return;
+  }
 
   db.prepare(`
     UPDATE designs SET name = ?, data = ?, updated_at = datetime('now')
     WHERE id = ?
   `).run(name, JSON.stringify(data), id);
 
+  invalidateSchedule();
   res.json({ success: true });
 });
 
@@ -86,17 +129,16 @@ router.post('/:id/copy', (req: Request, res: Response) => {
   }
 
   const newId = uuidv4();
+  const copyName = typeof name === 'string' && name.trim() ? name.slice(0, MAX_NAME_LENGTH) : `${original.name} (copy)`;
 
   db.prepare(`
     INSERT INTO designs (id, name, type, data, created_at, updated_at)
     VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))
-  `).run(newId, name || `${original.name} (copy)`, original.type, original.data);
+  `).run(newId, copyName, original.type, original.data);
 
+  invalidateSchedule();
   res.json({
-    id: newId,
-    name: name || `${original.name} (copy)`,
-    type: original.type,
-    data: JSON.parse(original.data),
+    ...parseRow({ id: newId, name: copyName, type: original.type, data: original.data }),
   });
 });
 
@@ -131,12 +173,13 @@ router.delete('/:id', (req: Request, res: Response) => {
 
   db.prepare('DELETE FROM designs WHERE id = ?').run(id);
 
+  invalidateSchedule();
   res.json({ success: true });
 });
 
 // Generate design using AI
 router.post('/ai/generate', async (req: Request, res: Response) => {
-  const { description, baseDesignId, mode, currentDesignData } = req.body;
+  const { description, baseDesignId, mode, currentDesignData } = req.body ?? {};
 
   if (!description || typeof description !== 'string') {
     res.status(400).json({ error: 'Description is required' });

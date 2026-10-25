@@ -20,6 +20,11 @@ services:
       - NODE_ENV=development
       - DATABASE_PATH=/app/data/rooftop-lights.db
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-}
+      # Local time zone for schedules (needs tzdata, installed in the image)
+      - TZ=${TZ:-America/New_York}
+      # Extra allowed CORS origins, comma-separated (default: same-origin only)
+      - CORS_ORIGINS=${CORS_ORIGINS:-}
     restart: unless-stopped
     networks:
       - rooftop-network
