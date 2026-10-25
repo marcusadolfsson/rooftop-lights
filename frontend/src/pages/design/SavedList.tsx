@@ -1,4 +1,5 @@
 import { useRef, useState, type ReactNode } from 'react';
+import { useIsMobile } from '../../hooks/useMediaQuery';
 
 export interface SavedListItem {
   id: string;
@@ -25,6 +26,16 @@ export default function SavedList({ title, items, selectedId, onSelect, onRename
   const [renameValue, setRenameValue] = useState('');
   // Enter and the blur that follows it would otherwise both submit
   const submittingRef = useRef(false);
+  // On phones the list sits above the editor, so it starts collapsed and folds
+  // away again after a pick to bring the editor back into view
+  const isMobile = useIsMobile();
+  const [collapsed, setCollapsed] = useState(true);
+  const hidden = isMobile && collapsed && renamingId === null;
+  const selectedName = items.find((i) => i.id === selectedId)?.name;
+  const select = (id: string) => {
+    onSelect(id);
+    if (isMobile) setCollapsed(true);
+  };
 
   const finishRename = async (id: string) => {
     if (submittingRef.current) return;
@@ -46,10 +57,23 @@ export default function SavedList({ title, items, selectedId, onSelect, onRename
 
   return (
     <div className="card">
-      <div className="card-header" style={{ marginBottom: '0.375rem', paddingBottom: '0.375rem' }}>
-        <h3 className="card-title">{title}</h3>
-      </div>
-      <div className="saved-designs-scroll" style={{ maxHeight: 'none' }}>
+      {isMobile ? (
+        <button
+          type="button"
+          className="saved-list-toggle"
+          aria-expanded={!hidden}
+          onClick={() => setCollapsed(!collapsed)}
+        >
+          <span className="card-title">{title} <span className="saved-list-count">({items.length})</span></span>
+          {hidden && selectedName && <span className="saved-list-current">{selectedName}</span>}
+          <svg className="saved-list-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+      ) : (
+        <div className="card-header" style={{ marginBottom: '0.375rem', paddingBottom: '0.375rem' }}>
+          <h3 className="card-title">{title}</h3>
+        </div>
+      )}
+      <div className="saved-designs-scroll" style={{ maxHeight: 'none' }} hidden={hidden}>
         <table className="table saved-designs-table">
           <tbody>
             {items.map((item) => {
@@ -58,7 +82,7 @@ export default function SavedList({ title, items, selectedId, onSelect, onRename
                 <tr
                   key={item.id}
                   style={{ cursor: 'pointer', backgroundColor: selected ? 'var(--bg-tertiary)' : undefined, borderLeft: selected ? '3px solid var(--primary-color)' : '3px solid transparent' }}
-                  onClick={() => onSelect(item.id)}
+                  onClick={() => select(item.id)}
                 >
                   <td style={{ fontWeight: selected ? 600 : 400 }}>
                     {renamingId === item.id ? (
@@ -83,7 +107,7 @@ export default function SavedList({ title, items, selectedId, onSelect, onRename
                         type="button"
                         className="saved-item-button"
                         aria-current={selected ? 'true' : undefined}
-                        onClick={(e) => { e.stopPropagation(); onSelect(item.id); }}
+                        onClick={(e) => { e.stopPropagation(); select(item.id); }}
                       >
                         {item.name}{item.meta && <> {item.meta}</>}
                       </button>

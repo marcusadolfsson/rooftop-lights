@@ -1139,35 +1139,6 @@ body {
   color: white;
 }
 
-/* Responsive */
-@media (max-width: 768px) {
-  .nav-content {
-    flex-direction: column;
-    align-items: flex-start;
-    height: auto;
-    padding: 0.75rem 0;
-  }
-
-  .nav-links {
-    flex-wrap: wrap;
-    width: 100%;
-  }
-
-  .main-content {
-    padding: 1rem;
-  }
-
-  .page-header {
-    flex-direction: column;
-    gap: 1rem;
-    align-items: flex-start;
-  }
-
-  .light-cell {
-    font-size: 0.5rem;
-  }
-}
-
 /* Light ID preview (Layout page) */
 .preview-strip-cell-id {
   display: flex;
@@ -1386,4 +1357,488 @@ body {
 
 .fx-check:focus-visible .fx-check-box {
   box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.35);
+}
+
+/* Design page columns: sidebar | editor | color picker */
+.design-layout {
+  display: flex;
+  gap: 1rem;
+  align-items: flex-start;
+}
+
+.design-main {
+  flex: 1;
+}
+
+.fx-settings {
+  display: flex;
+  gap: 1.5rem;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.preview-strip-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+/* Static paint grid: pointer events drive tap and drag painting, so the
+   browser must not pan or select text while a finger moves over it */
+.light-grid-paint {
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Phone-only controls (rendered or shown only below 768px) */
+.wall-switcher {
+  display: flex;
+  gap: 0.25rem;
+  margin-bottom: 0.75rem;
+  background-color: var(--bg-primary);
+  padding: 0.25rem;
+  border-radius: 0.5rem;
+  border: 1px solid var(--border-color);
+}
+
+.wall-switcher button {
+  flex: 1;
+  min-height: 40px;
+  border: none;
+  border-radius: 0.375rem;
+  background: none;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.wall-switcher button.active {
+  background-color: var(--primary-color);
+  color: white;
+}
+
+.wall-group-size {
+  font-weight: 400;
+  letter-spacing: 0;
+}
+
+.saved-list-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  min-height: 40px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.saved-list-count,
+.saved-list-current {
+  color: var(--text-secondary);
+  font-weight: 400;
+  font-size: 0.8rem;
+}
+
+.saved-list-current {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+}
+
+.saved-list-chevron {
+  flex-shrink: 0;
+  margin-left: auto;
+  color: var(--text-secondary);
+  transition: transform 0.2s;
+}
+
+.saved-list-current + .saved-list-chevron {
+  margin-left: 0;
+}
+
+.saved-list-toggle[aria-expanded='true'] .saved-list-chevron {
+  transform: rotate(180deg);
+}
+
+.saved-list-toggle[aria-expanded='true'] {
+  margin-bottom: 0.375rem;
+  padding-bottom: 0.375rem;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.playlist-item-move {
+  display: none;
+}
+
+/* Touch screens have no hover; a tapped cell would otherwise stay enlarged */
+@media (hover: none) {
+  .light-cell:hover {
+    transform: none;
+  }
+}
+
+/* Responsive: phones and small tablets. Desktop styles above are untouched. */
+@media (max-width: 768px) {
+  /* Nav: brand + DMX status on one row, the page tabs full width below */
+  .nav {
+    padding: 0 0.75rem;
+  }
+
+  .nav-content {
+    flex-wrap: wrap;
+    height: auto;
+    padding: 0.5rem 0;
+    row-gap: 0.375rem;
+  }
+
+  .nav-brand {
+    font-size: 1.05rem;
+    padding: 0.25rem 0;
+  }
+
+  .nav-status {
+    order: 2;
+  }
+
+  .status-indicator {
+    font-size: 0.75rem;
+  }
+
+  .nav-links {
+    order: 3;
+    width: 100%;
+    padding: 0.25rem;
+  }
+
+  .nav-link {
+    flex: 1;
+    text-align: center;
+    padding: 0.5rem 0.25rem;
+  }
+
+  .main-content {
+    padding: 0.75rem;
+    padding-bottom: 2rem;
+  }
+
+  .page-header {
+    flex-direction: column;
+    gap: 0.75rem;
+    align-items: flex-start;
+  }
+
+  .page-title {
+    font-size: 1.4rem;
+  }
+
+  /* Cards don't lift on tap */
+  .card:hover {
+    transform: none;
+    box-shadow: none;
+  }
+
+  .card-header {
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  /* Preview strip: not sticky (it would cover half the screen), controls wrap,
+     cells shrink so all 4 walls fit the width */
+  .preview-strip {
+    position: static;
+    padding: 0.625rem 0.75rem;
+    margin-bottom: 0.75rem;
+  }
+
+  .preview-strip-header {
+    flex-wrap: wrap;
+    gap: 0.5rem 0.75rem;
+  }
+
+  .preview-strip-controls {
+    flex-wrap: wrap;
+    gap: 0.5rem 0.75rem;
+  }
+
+  .live-preview-toggle span {
+    font-size: 0.7rem;
+    white-space: nowrap;
+  }
+
+  .preview-mode-toggle button {
+    min-height: 32px;
+    padding: 0.25rem 0.75rem;
+  }
+
+  .preview-strip-grid {
+    padding: 0.375rem;
+  }
+
+  .preview-strip-cell {
+    min-width: 6px;
+    min-height: 6px;
+  }
+
+  /* Light ID cells need room for their numbers; that strip scrolls instead */
+  .preview-strip-cell-id {
+    min-width: 22px;
+    min-height: 22px;
+  }
+
+  .preview-3d-container {
+    height: 220px;
+  }
+
+  /* Design page: one column — tabs + AI + saved list, editor, color picker */
+  .design-layout {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.75rem;
+  }
+
+  .design-main {
+    min-width: 0;
+  }
+
+  .design-sidebar,
+  .color-picker-column {
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+  }
+
+  .color-picker-column {
+    position: static;
+  }
+
+  .color-picker-column:empty {
+    display: none;
+  }
+
+  .design-sidebar .tab {
+    padding: 0.625rem 0.25rem;
+    font-size: 0.875rem;
+  }
+
+  .design-layout .btn-sm {
+    min-height: 40px;
+    padding: 0.5rem 0.875rem;
+    justify-content: center;
+  }
+
+  .design-layout .btn-group {
+    flex-wrap: wrap;
+  }
+
+  .color-window-picker .react-colorful {
+    height: 140px;
+  }
+
+  .color-window-picker .react-colorful__hue {
+    height: 24px;
+  }
+
+  .color-toolbar-tool {
+    min-width: 40px;
+    min-height: 36px;
+    justify-content: center;
+  }
+
+  .color-toolbar-input {
+    font-size: 1rem; /* 16px stops iOS zooming in on focus */
+    padding: 0.3rem 0.2rem;
+  }
+
+  /* Static grid: one wall at a time (see the wall switcher), cells fill the
+     width and are tall enough to hit with a thumb */
+  .matrix-walls-mobile .wall-group {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+
+  .matrix-walls-mobile .wall-group-label {
+    min-height: 40px;
+    margin-bottom: 0.375rem;
+    font-size: 0.75rem;
+  }
+
+  .matrix-walls-mobile .wall-group-label .btn {
+    margin-left: auto;
+  }
+
+  .matrix-walls-mobile .light-grid {
+    gap: 3px;
+    margin: 0 auto;
+  }
+
+  .matrix-walls-mobile .light-cell {
+    aspect-ratio: auto;
+    height: 48px;
+    border-width: 1px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    text-shadow: 0 0 2px #000, 0 0 2px #000;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .matrix-walls-mobile .light-cell.selected {
+    border-width: 2px;
+  }
+
+  /* Motion: settings and params stack full width */
+  .fx-settings {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 1rem;
+  }
+
+  .fx-settings > .form-group {
+    min-width: 0 !important;
+  }
+
+  .fx-params {
+    grid-template-columns: 1fr;
+  }
+
+  .fx-checklist {
+    width: auto;
+  }
+
+  .fx-check {
+    min-height: 32px;
+  }
+
+  .fx-slider::-webkit-slider-thumb {
+    width: 22px;
+    height: 22px;
+  }
+
+  .fx-slider::-moz-range-thumb {
+    width: 16px;
+    height: 16px;
+  }
+
+  /* Playlist editor: rows wrap, touch reorder buttons appear */
+  .playlist-editor-header .card-title {
+    flex: 1 1 100%;
+  }
+
+  .playlist-editor-header .card-title input {
+    width: 100% !important;
+  }
+
+  .playlist-item {
+    flex-wrap: wrap;
+    gap: 0.375rem;
+    padding: 0.5rem;
+  }
+
+  .playlist-item-drag {
+    display: none;
+  }
+
+  .playlist-item-name {
+    flex: 1 1 100%;
+  }
+
+  .playlist-item-move {
+    display: inline-flex;
+    gap: 0.125rem;
+  }
+
+  .playlist-item .form-select {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  .playlist-item .btn-icon {
+    min-width: 34px;
+    min-height: 36px;
+  }
+
+  .playlist-item .form-input,
+  .playlist-item .form-select {
+    min-height: 36px;
+  }
+
+  .saved-designs-table td {
+    padding: 0.5rem;
+    font-size: 0.875rem;
+  }
+
+  .saved-designs-table .btn-icon {
+    padding: 0.5rem !important;
+  }
+
+  /* Schedule page */
+  .schedule-item {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.75rem;
+  }
+
+  .schedule-item .btn-group .btn {
+    flex: 1;
+    justify-content: center;
+    min-height: 40px;
+  }
+
+  /* Layout page: wall grids keep 40px cells and scroll inside their card */
+  .wall-section {
+    padding: 0.875rem;
+  }
+
+  .wall-header {
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  .light-grid-scroll {
+    overflow-x: auto;
+    padding: 2px;
+  }
+
+  .light-cell {
+    font-size: 0.5rem;
+  }
+
+  /* Modals fit the screen */
+  .modal {
+    width: calc(100% - 1.5rem);
+    padding: 1.25rem;
+    max-height: calc(100dvh - 1.5rem);
+  }
+
+  .modal-header {
+    margin-bottom: 1rem;
+  }
+
+  .modal-footer {
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-top: 1rem;
+    padding-top: 1rem;
+  }
+
+  .modal-footer .btn {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+
+  .form-input,
+  .form-select {
+    font-size: 16px; /* iOS zooms into anything smaller on focus */
+  }
 }

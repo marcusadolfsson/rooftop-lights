@@ -27,7 +27,7 @@ export default function LightIdPreview({ walls, onLightClick }: LightIdPreviewPr
     <div className="preview-strip">
       <div className="preview-strip-header">
         <div className="preview-strip-title">Light IDs</div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+        <div className="preview-strip-controls">
           <div className="preview-mode-toggle" role="group" aria-label="Viewpoint">
             <button className={view === 'outside' ? 'active' : ''} aria-pressed={view === 'outside'} onClick={() => setView('outside')}>
               Outside

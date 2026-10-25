@@ -1,6 +1,7 @@
-import { useEffect, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import type { Design, LayoutData, RGBW } from '../../types';
 import { rgbwToCss } from '../../utils/color';
+import { useIsMobile } from '../../hooks/useMediaQuery';
 import ColorPicker from './ColorPicker';
 import SavedList from './SavedList';
 import type { StaticEditor } from './editors';
@@ -24,26 +25,37 @@ export default function StaticPanel({
 }: StaticPanelProps) {
   const { selectedDesign, colors, hasChanges, colorTool } = editor;
   const [selectedLights, setSelectedLights] = useState<Set<number>>(new Set());
-  const [isDragging, setIsDragging] = useState(false);
+  // Drag-to-paint state; refs because pointermove reads them between renders
+  const draggingRef = useRef(false);
+  const lastPaintedRef = useRef<number | null>(null);
+  const isMobile = useIsMobile();
+  // Phones show one wall at a time so the cells stay big enough to tap
+  const [mobileWallId, setMobileWallId] = useState<string | null>(null);
 
-  // Stop painting on mouseup anywhere; clicking outside the grid/picker clears the selection
+  // Stop painting on pointerup anywhere; clicking outside the grid/picker clears the selection
   useEffect(() => {
-    const handleMouseUp = () => setIsDragging(false);
+    const handlePointerUp = () => {
+      draggingRef.current = false;
+      lastPaintedRef.current = null;
+    };
     const handleDeselect = (e: MouseEvent) => {
       const target = e.target as HTMLElement;
       if (!target.closest('.light-cell') && !target.closest('.color-window')) {
         setSelectedLights(new Set());
       }
     };
-    document.addEventListener('mouseup', handleMouseUp);
+    document.addEventListener('pointerup', handlePointerUp);
+    document.addEventListener('pointercancel', handlePointerUp);
     document.addEventListener('mousedown', handleDeselect);
     return () => {
-      document.removeEventListener('mouseup', handleMouseUp);
+      document.removeEventListener('pointerup', handlePointerUp);
+      document.removeEventListener('pointercancel', handlePointerUp);
       document.removeEventListener('mousedown', handleDeselect);
     };
   }, []);
 
   const paintLight = (lightId: number) => {
+    lastPaintedRef.current = lightId;
     editor.paint([lightId], currentColor);
     setSelectedLights((prev) => new Set(prev).add(lightId));
   };
@@ -58,19 +70,26 @@ export default function StaticPanel({
     else paintLight(lightId);
   };
 
-  const handleLightMouseDown = (lightId: number, e: ReactMouseEvent) => {
+  // Pointer events cover mouse, touch and pen alike. preventDefault stops text
+  // selection and the emulated mousedown that would clear the selection.
+  const handleLightPointerDown = (lightId: number, e: ReactPointerEvent) => {
     e.preventDefault();
     e.stopPropagation();
     if (colorTool === 'apply') {
-      setIsDragging(true);
+      draggingRef.current = true;
       paintLight(lightId);
     } else {
       pickupColor(lightId);
     }
   };
 
-  const handleLightMouseEnter = (lightId: number) => {
-    if (isDragging && colorTool === 'apply') paintLight(lightId);
+  // Touch pointers stay captured by the cell they started on, so find the cell
+  // under the finger rather than relying on enter/leave events
+  const handleGridPointerMove = (e: ReactPointerEvent) => {
+    if (!draggingRef.current || colorTool !== 'apply') return;
+    const cell = document.elementFromPoint(e.clientX, e.clientY)?.closest<HTMLElement>('[data-light-id]');
+    const id = cell ? Number(cell.dataset.lightId) : NaN;
+    if (Number.isFinite(id) && id !== lastPaintedRef.current) paintLight(id);
   };
 
   // Picker changes also recolor the selected lights
@@ -81,9 +100,12 @@ export default function StaticPanel({
 
   const eastWall = layout.walls.find((w) => w.name === 'East');
   const southWall = layout.walls.find((w) => w.name === 'South');
+  const mobileWall = layout.walls.find((w) => w.id === mobileWallId) ?? layout.walls[0];
+  const shownWalls = isMobile && mobileWall ? [mobileWall] : layout.walls;
+  const copyButtonStyle = { padding: '0.2rem 0.5rem', fontSize: '0.7rem' };
 
   return (
-    <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-start' }}>
+    <div className="design-layout">
       <div className="design-sidebar">
         {sidebarHeader}
         <SavedList
@@ -97,7 +119,7 @@ export default function StaticPanel({
       </div>
 
       {/* Center: Light Matrix */}
-      <div style={{ flex: 1 }}>
+      <div className="design-main">
         <div className="btn-group" style={{ marginBottom: '0.5rem' }}>
           {selectedDesign ? (
             <button className="btn btn-primary btn-sm" onClick={editor.startNew}>New</button>
@@ -109,15 +131,42 @@ export default function StaticPanel({
           {hasChanges && !selectedDesign && <button className="btn btn-primary btn-sm" onClick={onSaveAs}>Save</button>}
           {selectedDesign && hasChanges && <button className="btn btn-secondary btn-sm" onClick={editor.cancel}>Cancel</button>}
         </div>
-        <div className="matrix-walls-wrap">
-          {layout.walls.map((wall) => (
-            <div key={wall.id} className="wall-group" style={{ flex: `${wall.width} 0 0`, minWidth: `${wall.width * 4}%` }}>
+        {isMobile && layout.walls.length > 1 && (
+          <div className="wall-switcher" role="group" aria-label="Wall">
+            {layout.walls.map((wall) => (
+              <button
+                key={wall.id}
+                type="button"
+                className={wall.id === mobileWall?.id ? 'active' : ''}
+                aria-pressed={wall.id === mobileWall?.id}
+                onClick={() => setMobileWallId(wall.id)}
+              >
+                {wall.name}
+              </button>
+            ))}
+          </div>
+        )}
+        <div className={`matrix-walls-wrap${isMobile ? ' matrix-walls-mobile' : ''}`} onPointerMove={handleGridPointerMove}>
+          {shownWalls.map((wall) => (
+            <div
+              key={wall.id}
+              className="wall-group"
+              style={isMobile ? undefined : { flex: `${wall.width} 0 0`, minWidth: `${wall.width * 4}%` }}
+            >
               <div className="wall-group-label">
                 <span>{wall.name}</span>
-                {wall.name === 'West' && eastWall && <button className="btn btn-secondary btn-sm" style={{ padding: '0.2rem 0.5rem', fontSize: '0.7rem' }} onClick={() => editor.copyWall(wall, eastWall)}>Copy to East</button>}
-                {wall.name === 'North' && southWall && <button className="btn btn-secondary btn-sm" style={{ padding: '0.2rem 0.5rem', fontSize: '0.7rem' }} onClick={() => editor.copyWall(wall, southWall)}>Copy to South</button>}
+                {isMobile && <span className="wall-group-size">{wall.width}×{wall.height}</span>}
+                {wall.name === 'West' && eastWall && <button className="btn btn-secondary btn-sm" style={copyButtonStyle} onClick={() => editor.copyWall(wall, eastWall)}>Copy to East</button>}
+                {wall.name === 'North' && southWall && <button className="btn btn-secondary btn-sm" style={copyButtonStyle} onClick={() => editor.copyWall(wall, southWall)}>Copy to South</button>}
               </div>
-              <div className="light-grid" style={{ gridTemplateColumns: `repeat(${wall.width}, 1fr)` }}>
+              <div
+                className="light-grid light-grid-paint"
+                style={{
+                  gridTemplateColumns: `repeat(${wall.width}, ${isMobile ? 'minmax(0, 1fr)' : '1fr'})`,
+                  // Narrow walls (3 wide) shouldn't stretch into giant tiles on phones
+                  maxWidth: isMobile ? `${wall.width * 72}px` : undefined,
+                }}
+              >
                 {Array.from({ length: wall.height }, (_, rowIdx) => {
                   const y = wall.height - 1 - rowIdx;
                   return Array.from({ length: wall.width }, (_, x) => {
@@ -128,14 +177,14 @@ export default function StaticPanel({
                     return (
                       <div
                         key={light.id}
+                        data-light-id={id}
                         className={`light-cell${selected ? ' selected' : ''}`}
                         style={{ backgroundColor: rgbwToCss(colors[id]), cursor: colorTool === 'pickup' ? 'crosshair' : 'pointer' }}
                         role="button"
                         tabIndex={0}
                         aria-label={`Light ${id} (${wall.name})${colorTool === 'pickup' ? ': pick up color' : ': paint'}`}
                         aria-pressed={selected}
-                        onMouseDown={(e) => handleLightMouseDown(id, e)}
-                        onMouseEnter={() => handleLightMouseEnter(id)}
+                        onPointerDown={(e) => handleLightPointerDown(id, e)}
                         onClick={() => handleLightActivate(id)}
                         onKeyDown={(e) => {
                           if (e.key === 'Enter' || e.key === ' ') {
@@ -155,7 +204,7 @@ export default function StaticPanel({
         </div>
       </div>
 
-      {/* Right Column: Color Picker */}
+      {/* Right Column: Color Picker (directly below the grid on phones) */}
       <div className="color-picker-column">
         <ColorPicker
           color={currentColor}

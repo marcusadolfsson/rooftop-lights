@@ -265,51 +265,54 @@ function LayoutPage() {
         </div>
       </div>
 
-      <div
-        className="light-grid"
-        style={{
-          gridTemplateColumns: `repeat(${wall.width}, 40px)`,
-        }}
-      >
-        {Array.from({ length: wall.height }, (_, rowIdx) => {
-          const y = wall.height - 1 - rowIdx;
-          return Array.from({ length: wall.width }, (_, x) => {
-            const light = wall.matrix?.[y]?.[x];
-            if (!light) return <div key={`${y}-${x}`} className="light-cell" />;
+      {/* Scrolls sideways on phones instead of widening the page */}
+      <div className="light-grid-scroll">
+        <div
+          className="light-grid"
+          style={{
+            gridTemplateColumns: `repeat(${wall.width}, 40px)`,
+          }}
+        >
+          {Array.from({ length: wall.height }, (_, rowIdx) => {
+            const y = wall.height - 1 - rowIdx;
+            return Array.from({ length: wall.width }, (_, x) => {
+              const light = wall.matrix?.[y]?.[x];
+              if (!light) return <div key={`${y}-${x}`} className="light-cell" />;
 
-            return (
-              <div
-                key={light.id}
-                className={`light-cell ${selectedLight?.id === light.id ? 'selected' : ''}`}
-                style={{ backgroundColor: rgbwToStyle(light), position: 'relative' }}
-                onClick={() => handleLightClick(light)}
-                role="button"
-                tabIndex={0}
-                aria-label={`Edit light ${light.light_id}${light.defective_channels ? ' (defective)' : ''}`}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault();
-                    handleLightClick(light);
-                  }
-                }}
-                title={`Light #${light.light_id}\nDMX: ${light.dmx_start_channel}-${light.dmx_start_channel + (light.light_type === 'RGBW' ? 3 : 2)}${light.defective_channels ? `\nDefective: ${light.defective_channels.toUpperCase()}` : ''}`}
-              >
-                {light.light_id}
-                {light.defective_channels && (
-                  <span style={{
-                    position: 'absolute',
-                    top: '1px',
-                    right: '3px',
-                    color: '#ff4444',
-                    fontSize: '10px',
-                    fontWeight: 'bold',
-                    lineHeight: 1,
-                  }}>!</span>
-                )}
-              </div>
-            );
-          });
-        }).flat()}
+              return (
+                <div
+                  key={light.id}
+                  className={`light-cell ${selectedLight?.id === light.id ? 'selected' : ''}`}
+                  style={{ backgroundColor: rgbwToStyle(light), position: 'relative' }}
+                  onClick={() => handleLightClick(light)}
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`Edit light ${light.light_id}${light.defective_channels ? ' (defective)' : ''}`}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      handleLightClick(light);
+                    }
+                  }}
+                  title={`Light #${light.light_id}\nDMX: ${light.dmx_start_channel}-${light.dmx_start_channel + (light.light_type === 'RGBW' ? 3 : 2)}${light.defective_channels ? `\nDefective: ${light.defective_channels.toUpperCase()}` : ''}`}
+                >
+                  {light.light_id}
+                  {light.defective_channels && (
+                    <span style={{
+                      position: 'absolute',
+                      top: '1px',
+                      right: '3px',
+                      color: '#ff4444',
+                      fontSize: '10px',
+                      fontWeight: 'bold',
+                      lineHeight: 1,
+                    }}>!</span>
+                  )}
+                </div>
+              );
+            });
+          }).flat()}
+        </div>
       </div>
     </div>
   );

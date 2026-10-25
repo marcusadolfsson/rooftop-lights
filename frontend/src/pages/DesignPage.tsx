@@ -336,7 +336,7 @@ function DesignPage() {
         <div className="preview-strip" ref={previewStripRef}>
           <div className="preview-strip-header">
             <div className="preview-strip-title">Preview</div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+            <div className="preview-strip-controls">
               <div className="preview-mode-toggle" role="group" aria-label="Preview mode">
                 <button className={previewMode === '2d' ? 'active' : ''} aria-pressed={previewMode === '2d'} onClick={() => setPreviewMode('2d')}>
                   2D

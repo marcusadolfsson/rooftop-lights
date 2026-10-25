@@ -1,6 +1,7 @@
 import type { CSSProperties, ReactNode } from 'react';
 import type { Design, EffectType, RGBW, Wall } from '../../types';
 import { rgbwToCss } from '../../utils/color';
+import { useIsMobile } from '../../hooks/useMediaQuery';
 import ColorPicker from './ColorPicker';
 import SavedList from './SavedList';
 import type { MotionEditor } from './editors';
@@ -33,6 +34,7 @@ export default function MotionPanel({
 }: MotionPanelProps) {
   const { selectedDesign, effect, colors, speed, scope, params, selectedColorIdx, hasChanges } = editor;
   const isAi = effect?.type === 'ai';
+  const isMobile = useIsMobile();
 
   const pickColor = (first: RGBW | undefined) => { if (first) setCurrentColor({ ...first }); };
 
@@ -43,7 +45,7 @@ export default function MotionPanel({
   };
 
   return (
-    <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-start' }}>
+    <div className="design-layout">
       <div className="design-sidebar">
         {sidebarHeader}
         <SavedList
@@ -57,7 +59,7 @@ export default function MotionPanel({
       </div>
 
       {/* Center: Action buttons + Effect Config */}
-      <div style={{ flex: 1 }}>
+      <div className="design-main">
         <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.75rem', flexWrap: 'wrap' }}>
           {selectedDesign ? (
             <button className="btn btn-primary btn-sm" onClick={editor.clear}>New</button>
@@ -105,7 +107,7 @@ export default function MotionPanel({
                 </button>
               </div>
             )}
-            <div style={{ display: 'flex', gap: '1.5rem', alignItems: 'flex-start', flexWrap: 'wrap' }}>
+            <div className="fx-settings">
               {effect.defaultColors.length > 0 && (
                 <div className="form-group" style={{ marginBottom: 0 }}>
                   <span className="form-label" id="motion-colors-label">Colors (click to edit)</span>
@@ -130,6 +132,10 @@ export default function MotionPanel({
                     })}
                   </div>
                 </div>
+              )}
+              {/* Phones get the picker right under the swatches it edits */}
+              {isMobile && effect.defaultColors.length > 0 && (
+                <ColorPicker color={currentColor} onChange={handleColorChange} hasRGBW={hasRGBW} />
               )}
               <div className="form-group" style={{ marginBottom: 0, minWidth: '160px' }}>
                 <div className="fx-param-head">
@@ -202,7 +208,7 @@ export default function MotionPanel({
 
       {/* Right Column: Color Picker */}
       <div className="color-picker-column">
-        {effect && <ColorPicker color={currentColor} onChange={handleColorChange} hasRGBW={hasRGBW} />}
+        {effect && !isMobile && <ColorPicker color={currentColor} onChange={handleColorChange} hasRGBW={hasRGBW} />}
       </div>
     </div>
   );

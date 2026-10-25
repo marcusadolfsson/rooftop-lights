@@ -15,7 +15,7 @@ export default function PlaylistPanel({ editor, designs, playlists, sidebarHeade
   const { selectedPlaylist, items, dragKey } = editor;
 
   return (
-    <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-start' }}>
+    <div className="design-layout">
       <div className="design-sidebar">
         {sidebarHeader}
         <SavedList
@@ -34,9 +34,9 @@ export default function PlaylistPanel({ editor, designs, playlists, sidebarHeade
       </div>
 
       {/* Right: Playlist Editor */}
-      <div style={{ flex: 1 }}>
+      <div className="design-main">
         <div className="card">
-          <div className="card-header">
+          <div className="card-header playlist-editor-header">
             <h3 className="card-title">
               {selectedPlaylist ? (
                 <input
@@ -92,6 +92,11 @@ export default function PlaylistPanel({ editor, designs, playlists, sidebarHeade
                     <option value="fade">Fade</option>
                     <option value="fade_black">Fade to Black</option>
                   </select>
+                  {/* HTML drag and drop doesn't work with touch, so phones get move buttons */}
+                  <span className="playlist-item-move">
+                    <button type="button" className="btn-icon" aria-label={`Move ${item.design_name ?? 'item'} up`} disabled={idx === 0} onClick={() => editor.moveItem(item.key, -1)}>↑</button>
+                    <button type="button" className="btn-icon" aria-label={`Move ${item.design_name ?? 'item'} down`} disabled={idx === items.length - 1} onClick={() => editor.moveItem(item.key, 1)}>↓</button>
+                  </span>
                   <button className="btn-icon" style={{ padding: '0.2rem', color: 'var(--danger-color)' }} title="Remove" aria-label={`Remove ${item.design_name ?? 'item'}`} onClick={() => editor.removeItem(item.key)}>
                     {trashIcon(14)}
                   </button>
