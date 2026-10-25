@@ -28,7 +28,7 @@ A web app for designing, previewing and scheduling shows on architectural RGBW l
 | Comet & Chase | Bright head (adjustable size) with a fading tail; Tail length 0 makes it a chase |
 | Sparkle | Random lights twinkling over a base color |
 | Rainbow | Smooth rainbow cycling across the display |
-| Wave | Sinusoidal brightness wave |
+| Wave | Smooth waves rolling along the walls from a trough color to a crest color |
 | Meet in the Middle | Two groups start at opposite ends and meet in the middle, with an optional comet tail |
 | Breathe | All lights pulsing together |
 | Text | Scrolling text |

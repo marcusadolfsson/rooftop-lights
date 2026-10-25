@@ -116,6 +116,8 @@ function axisRange(width: number, rows: number, v: { cos: number; sin: number })
 }
 
 const FPS = 30;
+// Wave crests move 6 lights per second at 1x
+const WAVE_LIGHTS_PER_FRAME = 0.2;
 
 /**
  * Optional "pause before looping": params.pause seconds of darkness appended to each cycle.
@@ -669,63 +671,38 @@ export class EffectEngine {
   private generateWave(effect: MotionEffect, frameNum: number): Map<number, RGBW> {
     const frame = new Map<number, RGBW>();
     const colors = effect.colors.length > 0 ? effect.colors : [{ r: 0, g: 0, b: 0, w: 255 }];
-    const wavelength = num(effect.params?.wavelength, 10, 0.5, 1000);
+    const wavelength = num(effect.params?.wavelength, 8, 2, 1000);
     const bounce = bool(effect.params?.bounce, false);
-    // Above 1 the troughs would go below zero brightness
-    const waveHeight = num(effect.params?.waveHeight, 1.0, 0, 1);
+    // How dark the troughs get: 0 = flat brightness (only the colors move), 1 = troughs fully dark.
+    // Older designs stored this as waveHeight.
+    const depth = num(effect.params?.depth ?? effect.params?.waveHeight, 0.6, 0, 1);
     const dir = angleVector(effect);
+    // The wave travels a fixed number of lights per second at 1x, whatever its wavelength
+    const travel = frameNum * WAVE_LIGHTS_PER_FRAME;
 
     for (let y = 0; y < this.rows; y++) {
       for (const row of this.getSegments(y, effect.scope)) {
-        const totalWidth = row.length;
-
-        let timeFactor: number;
-        if (bounce) {
-          const cycleFrames = totalWidth * 10;
-          const fullCycle = cycleFrames * 2;
-          const pos = frameNum % fullCycle;
-          timeFactor = pos < cycleFrames
-            ? (pos / cycleFrames) * totalWidth / wavelength
-            : ((fullCycle - pos) / cycleFrames) * totalWidth / wavelength;
-        } else {
-          timeFactor = frameNum * 0.05;
-        }
+        const range = axisRange(row.length, this.rows, dir);
+        const extent = range.max - range.min + 1;
+        // Back and forth: the crests slide along the segment and back instead of rolling on
+        const offset = bounce ? extent - Math.abs((travel % (2 * extent)) - extent) : travel;
 
         for (let j = 0; j < row.length; j++) {
           const light = row[j];
           const u = j * dir.cos + y * dir.sin;
-          const phase = (u / wavelength + timeFactor) * Math.PI * 2;
-          const sinVal = Math.sin(phase);
-          const brightness = sinVal * (waveHeight / 2) + (1 - waveHeight / 2);
+          // 0 at a trough, 1 at a crest, moving toward higher u (left to right at 0°)
+          const level = 0.5 + 0.5 * Math.cos(((u - offset) / wavelength) * Math.PI * 2);
 
-          // Interpolate between colors based on phase position
+          // Crests show the last color and troughs the first; extra colors sit in between
           let color: RGBW;
           if (colors.length === 1) {
             color = colors[0];
           } else {
-            // Map the wave height (trough 0 .. peak 1) onto colors[0] .. colors[N-1], no wrap-around,
-            // so troughs show the first color and peaks the last
-            const normalizedPhase = (sinVal * 0.5 + 0.5); // 0..1
-            const colorPos = normalizedPhase * (colors.length - 1);
-            const idx = Math.min(Math.floor(colorPos), colors.length - 2);
-            const nextIdx = idx + 1;
-            const frac = colorPos - idx;
-            const c1 = colors[idx];
-            const c2 = colors[nextIdx];
-            color = {
-              r: c1.r * (1 - frac) + c2.r * frac,
-              g: c1.g * (1 - frac) + c2.g * frac,
-              b: c1.b * (1 - frac) + c2.b * frac,
-              w: c1.w * (1 - frac) + c2.w * frac,
-            };
+            const pos = level * (colors.length - 1);
+            const idx = Math.min(Math.floor(pos), colors.length - 2);
+            color = mixColor(colors[idx], colors[idx + 1], pos - idx);
           }
-
-          frame.set(light.light_id, {
-            r: Math.round(color.r * brightness),
-            g: Math.round(color.g * brightness),
-            b: Math.round(color.b * brightness),
-            w: Math.round(color.w * brightness),
-          });
+          frame.set(light.light_id, scaleColor(color, 1 - depth * (1 - level)));
         }
       }
     }
