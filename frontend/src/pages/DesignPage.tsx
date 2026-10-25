@@ -115,7 +115,6 @@ function DesignPage() {
   const [sceneAiLoading, setSceneAiLoading] = useState(false);
   const [sceneAiError, setSceneAiError] = useState<string | null>(null);
   const [sceneAiOutcome, setSceneAiOutcome] = useState<AiSceneOutcome | null>(null);
-  const [sceneAiUndoing, setSceneAiUndoing] = useState(false);
   // Bumped to remount the scene panel (closing any inline editor) when a generated scene opens
   const [scenePanelEpoch, setScenePanelEpoch] = useState(0);
 
@@ -581,27 +580,6 @@ function DesignPage() {
     }
   };
 
-  // Undo: delete the generated scene and the designs made for it (ones nothing else uses)
-  const undoAIScene = async () => {
-    const outcome = sceneAiOutcome;
-    if (!outcome || sceneAiUndoing) return;
-    const designs = outcome.designIds.length;
-    if (!confirm(`Discard the scene "${outcome.name}"${designs ? ` and the ${designs} design${designs === 1 ? '' : 's'} made for it` : ''}?`)) return;
-    setSceneAiUndoing(true);
-    try {
-      if (playback?.kind === 'scene') handleStopPlayback();
-      await playlistsAPI.aiUndo(outcome.sceneId, outcome.designIds);
-      if (sceneEditor.selectedPlaylist?.id === outcome.sceneId) sceneEditor.startNew();
-      setScenePanelEpoch((n) => n + 1);
-      setSceneAiOutcome(null);
-      await loadData();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to undo the generated scene');
-    } finally {
-      setSceneAiUndoing(false);
-    }
-  };
-
   // The outcome banner belongs to the generated scene; opening another one dismisses it
   const shownSceneAiOutcome = sceneAiOutcome && activeTab === 'scenes' && sceneEditor.selectedPlaylist?.id === sceneAiOutcome.sceneId
     ? sceneAiOutcome : null;
@@ -850,18 +828,8 @@ function DesignPage() {
               </details>
             )}
           </div>
-          <div className="ai-scene-result-actions">
-            <button
-              className={`btn btn-sm ${playback?.kind === 'scene' ? 'btn-primary' : 'btn-secondary'}`}
-              onClick={playback?.kind === 'scene' ? handleStopPlayback : () => handlePlay('scene', 0)}
-            >
-              {playback?.kind === 'scene' ? 'Stop' : 'Play'}
-            </button>
-            <button className="btn btn-sm btn-danger" onClick={undoAIScene} disabled={sceneAiUndoing} title="Delete this scene and the designs made for it">
-              {sceneAiUndoing ? 'Undoing...' : 'Undo'}
-            </button>
-            <button className="btn btn-sm btn-secondary" onClick={() => setSceneAiOutcome(null)} title="Keep the scene and hide this message">Keep</button>
-          </div>
+          {/* The scene is already saved, so all that's left is to dismiss the note */}
+          <button className="btn-icon ai-scene-result-close" onClick={() => setSceneAiOutcome(null)} title="Hide this message" aria-label="Hide this message">×</button>
         </div>
       )}
 

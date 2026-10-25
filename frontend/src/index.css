@@ -2787,3 +2787,11 @@ body {
 .folder-row-inner {
   min-width: 0;
 }
+
+.ai-scene-result-close {
+  align-self: flex-start;
+  padding: 0 0.35rem;
+  font-size: 1.1rem;
+  line-height: 1;
+  color: var(--text-secondary);
+}
