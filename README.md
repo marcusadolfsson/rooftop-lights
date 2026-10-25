@@ -13,7 +13,7 @@ A web app for designing, previewing and scheduling shows on architectural RGBW l
 
 **Static designs.** Click or drag to paint lights with an RGBW color picker, pick up colors from existing lights, and copy one wall onto its opposite (West to East, North to South).
 
-**Motion effects.** Each effect has its own colors, speed and parameters, and a scope: continuous around the whole perimeter, per wall, or per wall group.
+**Motion effects.** Each effect has its own colors, speed and parameters, and a scope: continuous around the whole perimeter, per wall, or per wall group. Per Wall can be limited to chosen walls. Comet, Rainbow and Wave take an angle (0° along the walls, 90° bottom to top), and Candy Cane takes a stripe angle. Comet can let its tail run fully out of frame before it loops.
 
 | Effect | What it does |
 |---|---|
