@@ -188,8 +188,26 @@ export default function MotionPanel({
                     <button key={s.value} className={scope === s.value ? 'active' : ''} aria-pressed={scope === s.value} onClick={() => editor.setScope(s.value)}>{s.label}</button>
                   ))}
                 </div>
-                {scope === 'wall' && walls.length > 0 && (
-                  <WallChecklist walls={walls} wallIds={params.wallIds} onChange={(ids) => editor.setParam('wallIds', ids)} />
+                {(scope === 'wall' || (scope === 'group' && 'syncWalls' in effect.params)) && walls.length > 0 && (
+                  <div className="fx-checklist" role="group" aria-label={scope === 'wall' ? 'Walls' : 'Group options'}>
+                    {scope === 'wall' && (
+                      <WallChecklist walls={walls} wallIds={params.wallIds} onChange={(ids) => editor.setParam('wallIds', ids)} />
+                    )}
+                    {'syncWalls' in effect.params && (
+                      // Lives with the wall choice: it only matters when walls run separately
+                      <label className="fx-sync">
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-checked={params.syncWalls === true}
+                          className={`toggle-switch toggle-switch-sm ${params.syncWalls === true ? 'active' : ''}`}
+                          onClick={() => editor.setParam('syncWalls', params.syncWalls !== true)}
+                        />
+                        Sync walls
+                        <span className="fx-sync-hint">short walls keep pace with the longest</span>
+                      </label>
+                    )}
+                  </div>
                 )}
               </div>
             </div>
@@ -197,7 +215,7 @@ export default function MotionPanel({
               <div className="form-group" style={{ marginTop: '1.25rem' }}>
                 <span className="form-label">Parameters</span>
                 <div className="fx-params">
-                  {Object.entries(effect.params).map(([key, param]) => {
+                  {Object.entries(effect.params).filter(([key]) => key !== 'syncWalls').map(([key, param]) => {
                     const inputId = `motion-param-${key}`;
                     const label = param.label || humanize(key);
                     if (param.type === 'boolean') {
@@ -370,7 +388,7 @@ function WallChecklist({ walls, wallIds, onChange }: { walls: Wall[]; wallIds: u
     onChange(next.length === walls.length ? [] : next);
   };
   return (
-    <div className="fx-checklist" role="group" aria-label="Walls">
+    <div className="fx-checklist-walls">
       {walls.map((w) => (
         <button key={w.id} type="button" role="checkbox" aria-checked={isOn(w.id)} className={`fx-check ${isOn(w.id) ? 'checked' : ''}`} onClick={() => toggle(w.id)}>
           <span className="fx-check-box" aria-hidden="true" />
