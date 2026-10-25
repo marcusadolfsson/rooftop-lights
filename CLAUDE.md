@@ -54,8 +54,8 @@ https://rooftop.onestpete.com (Caddy reverse proxy to :3030)
 ### Commands
 
 ```bash
-# Production
-docker compose up -d
+# Production (GIT_COMMIT is shown with version/build date on the Layout page)
+GIT_COMMIT=$(git rev-parse --short HEAD) docker compose up -d --build
 
 # Development (hot reload, same port as production)
 docker compose -f docker-compose.dev.yml up --build

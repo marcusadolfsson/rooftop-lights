@@ -4,6 +4,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import http from 'http';
+import fs from 'fs';
 
 import { getDatabase, closeDatabase } from './models/database.js';
 import { initArtNet, stopArtNet, ArtNetConfig } from './artnet/artnet.js';
@@ -88,6 +89,20 @@ app.use('/api/preview', previewRoutes);
 
 // Health check (unauthenticated, fast, checks DB)
 const startTime = Date.now();
+// Version from package.json; commit and build time from build-info.json written by the Dockerfile
+// (absent in dev, where the build is reported as "dev")
+function readJson(file: string): Record<string, unknown> {
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch {
+    return {};
+  }
+}
+const appVersion = String(readJson(path.join(__dirname, '..', 'package.json')).version ?? 'unknown');
+const buildInfo = readJson(path.join(__dirname, '..', 'build-info.json'));
+const buildCommit = typeof buildInfo.commit === 'string' && buildInfo.commit ? buildInfo.commit : 'dev';
+const builtAt = typeof buildInfo.builtAt === 'string' ? buildInfo.builtAt : null;
+
 app.get('/health', (req, res) => {
   try {
     const db = getDatabase();
@@ -104,7 +119,9 @@ app.get('/health', (req, res) => {
 
   res.json({
     status: 'healthy',
-    version: '1.0.0',
+    version: appVersion,
+    commit: buildCommit,
+    builtAt,
     uptime,
     timeZone: serverTimeZone(),
     serverTime: localDateTimeString(),

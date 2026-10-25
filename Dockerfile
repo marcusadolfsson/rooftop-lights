@@ -41,6 +41,10 @@ COPY --from=frontend-build /app/frontend/dist ./public
 # Create data directory for persistent storage
 RUN mkdir -p /app/data
 
+# Build info shown on the Light Layout page (pass GIT_COMMIT as a build arg; see docker-compose.yml)
+ARG GIT_COMMIT=unknown
+RUN printf '{"commit":"%s","builtAt":"%s"}\n' "$GIT_COMMIT" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > /app/build-info.json
+
 # Expose ports
 EXPOSE 3030
 EXPOSE 6454/udp

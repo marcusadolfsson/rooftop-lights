@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
-import { layoutAPI, artnetAPI } from '../utils/api';
+import { layoutAPI, artnetAPI, healthAPI } from '../utils/api';
 import type { Wall, WallGroup, Light, ArtNetConfig, LayoutData } from '../types';
 import LightIdPreview from '../components/LightIdPreview';
 import { useEscapeKey } from '../hooks/useEscapeKey';
@@ -9,6 +9,7 @@ function LayoutPage() {
   const location = useLocation();
   const isVisible = location.pathname === '/layout';
   const [layout, setLayout] = useState<LayoutData | null>(null);
+  const [build, setBuild] = useState<{ version?: string; commit?: string; builtAt?: string | null } | null>(null);
   const [artnetConfig, setArtnetConfig] = useState<ArtNetConfig | null>(null);
   const [selectedLight, setSelectedLight] = useState<Light | null>(null);
   const [loading, setLoading] = useState(true);
@@ -22,6 +23,10 @@ function LayoutPage() {
   // Esc closes whichever modal is open
   useEscapeKey(!!selectedLight, () => setSelectedLight(null));
   useEscapeKey(!!editingWall, () => setEditingWall(null));
+
+  useEffect(() => {
+    healthAPI.get().then(setBuild).catch(() => setBuild(null));
+  }, []);
 
   useEffect(() => {
     if (isVisible) {
@@ -451,6 +456,13 @@ function LayoutPage() {
               <strong>Walls:</strong> {layout.walls.length}
             </div>
           </div>
+          {build?.version && (
+            <div className="build-info">
+              Version {build.version}
+              {build.commit && build.commit !== 'unknown' && <> · build <code>{build.commit}</code></>}
+              {build.builtAt && <> · built {new Date(build.builtAt).toLocaleString()}</>}
+            </div>
+          )}
         </div>
       )}
 

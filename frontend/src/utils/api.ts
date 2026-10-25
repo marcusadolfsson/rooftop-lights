@@ -310,7 +310,7 @@ export const previewAPI = {
 // Health (served outside /api). timeZone is optional: newer backends report the
 // zone schedules are evaluated in.
 export const healthAPI = {
-  get: async (): Promise<{ status: string; version?: string; uptime?: string; timeZone?: string }> => {
+  get: async (): Promise<{ status: string; version?: string; commit?: string; builtAt?: string | null; uptime?: string; timeZone?: string }> => {
     const response = await fetch('/health');
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     return response.json();

@@ -117,9 +117,11 @@ ANTHROPIC_API_KEY=sk-ant-...
 ### Production
 
 ```bash
-docker compose up -d --build
+GIT_COMMIT=$(git rev-parse --short HEAD) docker compose up -d --build
 open http://localhost:3030
 ```
+
+`GIT_COMMIT` is optional. It's shown, together with the version and build time, at the bottom of the Light Layout page's summary and in `GET /health`.
 
 ### Development (hot reload)
 

@@ -5,6 +5,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        # Shown on the Light Layout page: GIT_COMMIT=$(git rev-parse --short HEAD) docker compose up -d --build
+        GIT_COMMIT: ${GIT_COMMIT:-unknown}
     ports:
       - "3030:3030"
       - "6454:6454/udp"  # ArtNet port
