@@ -315,6 +315,8 @@ export class EffectEngine {
         return this.generateWave(effect, frameNum);
       case 'chase':
         return this.generateChase(effect, frameNum);
+      case 'converge':
+        return this.generateConverge(effect, frameNum);
       case 'breathe':
         return this.generateBreathe(effect, frameNum);
       case 'text':
@@ -594,6 +596,52 @@ export class EffectEngine {
         for (let g = 0; g < Math.min(groupSize, row.length); g++) {
           const idx = (pos + g) % row.length;
           frame.set(row[idx].light_id, chaseColor);
+        }
+      }
+    }
+
+    return frame;
+  }
+
+  // Meet in the Middle - two groups start at opposite ends of each row and meet in the middle
+  private generateConverge(effect: MotionEffect, frameNum: number): Map<number, RGBW> {
+    const frame = new Map<number, RGBW>();
+    const leftColor: RGBW = effect.colors[0] || { r: 0, g: 0, b: 0, w: 255 };
+    const rightColor: RGBW = effect.colors[1] || leftColor;
+    const meetColor: RGBW | undefined = effect.colors[2];
+    const groupSize = Math.round(num(effect.params?.groupSize || 3, 3, 1, 1000));
+    const bounce = bool(effect.params?.bounce, false);
+    const hold = Math.round(num(effect.params?.hold, 0, 0, 600) * FPS * effect.speed / 4);
+    const step = Math.floor(frameNum / 4);
+    const pause = pauseSteps(effect, 4);
+
+    for (const light of this.lights) {
+      frame.set(light.light_id, { ...BLACK });
+    }
+
+    for (let y = 0; y < 3; y++) {
+      for (const row of this.getSegments(y, effect.scope)) {
+        const len = row.length;
+        // Steps until the two heads reach the middle (they overlap on odd lengths)
+        const travel = Math.ceil(len / 2);
+        // Inward pass, optional hold while together, then (with bounce) the outward pass
+        const cycle = travel + hold + (bounce ? travel - 1 : 0);
+        const local = cycleStep(step, cycle, pause);
+        if (local === null) continue; // pausing before the next loop
+
+        let head: number;
+        if (local < travel) head = local;
+        else if (local < travel + hold) head = travel - 1;
+        else head = travel - 2 - (local - travel - hold);
+        const met = local >= travel - 1 && local < travel + hold;
+
+        for (let g = 0; g < Math.min(groupSize, len); g++) {
+          const i = head - g;
+          if (i < 0) break;
+          const fromLeft = row[i];
+          const fromRight = row[len - 1 - i];
+          if (fromLeft) frame.set(fromLeft.light_id, met && meetColor ? meetColor : leftColor);
+          if (fromRight) frame.set(fromRight.light_id, met && meetColor ? meetColor : rightColor);
         }
       }
     }

@@ -6,7 +6,7 @@ import { compileAICode } from './aiSandbox.js';
 
 export const MOTION_EFFECT_TYPES = [
   'ai', 'candy_cane', 'checkerboard', 'comet', 'sparkle',
-  'rainbow', 'wave', 'chase', 'breathe', 'text',
+  'rainbow', 'wave', 'chase', 'converge', 'breathe', 'text',
 ] as const;
 
 export const MAX_AI_CODE_LENGTH = 100_000;

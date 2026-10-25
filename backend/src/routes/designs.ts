@@ -341,6 +341,21 @@ router.get('/effects/types', (req: Request, res: Response) => {
       },
     },
     {
+      type: 'converge',
+      name: 'Meet in the Middle',
+      description: 'Two groups start at opposite ends and meet in the middle',
+      defaultColors: [
+        { r: 0, g: 0, b: 0, w: 255 },
+        { r: 0, g: 0, b: 0, w: 255 },
+      ],
+      params: {
+        groupSize: { type: 'number', default: 3, min: 1, max: 10 },
+        bounce: { type: 'boolean', default: false, label: 'Move back out after meeting' },
+        hold: { type: 'number', default: 0, min: 0, max: 10, step: 0.5, label: 'Hold when they meet', unit: ' s' },
+        pause: { type: 'number', default: 0, min: 0, max: 30, step: 0.5, label: 'Pause before looping', unit: ' s' },
+      },
+    },
+    {
       type: 'breathe',
       name: 'Breathe',
       description: 'All lights pulsing together like breathing',
