@@ -9,6 +9,9 @@ interface Preview3DProps {
   getLightColor: (lightId: number) => string;
   getDefectiveSimulation: (lightId: number, channels: string) => string | null;
   showDefective: boolean;
+  showIds?: boolean;
+  // 'inside' puts the camera in the center of the layout, looking out at the walls
+  view?: 'outside' | 'inside';
 }
 
 const LIGHT_SPACING = 0.8; // LIGHT_SIZE + gap
@@ -68,12 +71,14 @@ function parseColor(colorStr: string): [number, number, number] {
   return [0.13, 0.13, 0.13]; // dark fallback
 }
 
-function WallGroup({ wall, position, getLightColor, getDefectiveSimulation, showDefective }: {
+function WallGroup({ wall, position, getLightColor, getDefectiveSimulation, showDefective, showIds, inside }: {
   wall: Wall;
   position: [number, number, number];
   getLightColor: (lightId: number) => string;
   getDefectiveSimulation: (lightId: number, channels: string) => string | null;
   showDefective: boolean;
+  showIds?: boolean;
+  inside?: boolean;
 }) {
   const rotationY = WALL_ROTATION[wall.name];
   if (rotationY === undefined) return null;
@@ -113,6 +118,27 @@ function WallGroup({ wall, position, getLightColor, getDefectiveSimulation, show
 
       {/* Light boxes */}
       {lights.map(({ lightId, localX, localY, defective }) => {
+        if (showIds) {
+          return (
+            <group key={lightId} position={[localX, localY, 0]}>
+              <mesh>
+                <boxGeometry args={[LIGHT_SIZE, LIGHT_SIZE, LIGHT_DEPTH]} />
+                <meshStandardMaterial color="#475569" emissive="#334155" emissiveIntensity={0.8} />
+              </mesh>
+              <Text
+                position={[0, 0, inside ? -LIGHT_DEPTH / 2 - 0.01 : LIGHT_DEPTH / 2 + 0.01]}
+                rotation={[0, inside ? Math.PI : 0, 0]}
+                fontSize={0.3}
+                color="#f8fafc"
+                anchorX="center"
+                anchorY="middle"
+              >
+                {String(lightId)}
+              </Text>
+            </group>
+          );
+        }
+
         const isDefective = showDefective && !!defective;
         const simColor = isDefective ? getDefectiveSimulation(lightId, defective) : null;
         const colorStr = simColor || getLightColor(lightId);
@@ -142,6 +168,7 @@ function WallGroup({ wall, position, getLightColor, getDefectiveSimulation, show
       {/* Wall label */}
       <Text
         position={[0, -panelHeight / 2 - 0.4, 0]}
+        rotation={[0, inside ? Math.PI : 0, 0]}
         fontSize={0.4}
         color="#94a3b8"
         anchorX="center"
@@ -153,21 +180,33 @@ function WallGroup({ wall, position, getLightColor, getDefectiveSimulation, show
   );
 }
 
-export default function Preview3D({ walls, getLightColor, getDefectiveSimulation, showDefective }: Preview3DProps) {
+export default function Preview3D({ walls, getLightColor, getDefectiveSimulation, showDefective, showIds, view = 'outside' }: Preview3DProps) {
   const positions = useMemo(() => computeWallPositions(walls), [walls]);
+  const inside = view === 'inside';
 
   return (
     <div className="preview-3d-container">
-      <Canvas camera={{ position: [0, 8, 18], fov: 45 }}>
+      {/* key remounts the canvas so the camera resets when switching views */}
+      <Canvas key={view} camera={inside ? { position: [0, 0, 0.01], fov: 75 } : { position: [0, 8, 18], fov: 45 }}>
         <ambientLight intensity={0.3} />
         <directionalLight position={[5, 10, 5]} intensity={0.5} />
-        <OrbitControls
-          enablePan={true}
-          enableZoom={true}
-          enableRotate={true}
-          minDistance={5}
-          maxDistance={40}
-        />
+        {inside ? (
+          // Camera sits a hair off the center and orbits it, so dragging just turns your head
+          <OrbitControls
+            target={[0, 0, 0]}
+            enablePan={false}
+            enableZoom={false}
+            rotateSpeed={-0.4}
+          />
+        ) : (
+          <OrbitControls
+            enablePan={true}
+            enableZoom={true}
+            enableRotate={true}
+            minDistance={5}
+            maxDistance={40}
+          />
+        )}
         {walls.map((wall) => (
           <WallGroup
             key={wall.id}
@@ -176,6 +215,8 @@ export default function Preview3D({ walls, getLightColor, getDefectiveSimulation
             getLightColor={getLightColor}
             getDefectiveSimulation={getDefectiveSimulation}
             showDefective={showDefective}
+            showIds={showIds}
+            inside={inside}
           />
         ))}
       </Canvas>

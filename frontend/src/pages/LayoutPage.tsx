@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
 import { layoutAPI, artnetAPI } from '../utils/api';
 import type { Wall, WallGroup, Light, ArtNetConfig, LayoutData } from '../types';
+import LightIdPreview from '../components/LightIdPreview';
 
 function LayoutPage() {
   const location = useLocation();
@@ -315,6 +316,8 @@ function LayoutPage() {
       <div className="page-header">
         <h1 className="page-title">Light Layout</h1>
       </div>
+
+      {layout && <LightIdPreview walls={layout.walls} onLightClick={handleLightClick} />}
 
       {error && (
         <div className="card" style={{ backgroundColor: 'var(--error)', marginBottom: '1rem' }}>

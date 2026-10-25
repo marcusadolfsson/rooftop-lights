@@ -1161,3 +1161,22 @@ body {
     font-size: 0.5rem;
   }
 }
+
+/* Light ID preview (Layout page) */
+.preview-strip-cell-id {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  min-width: 22px;
+  cursor: pointer;
+}
+
+.preview-strip-cell-id:hover {
+  background-color: var(--primary-color);
+  color: white;
+}
