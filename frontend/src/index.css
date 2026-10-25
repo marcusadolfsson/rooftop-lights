@@ -2859,7 +2859,17 @@ body {
     pointer-events: auto;
   }
 
+  .folder-row .folder-row-inner {
+    position: relative;
+  }
+
   .folder-row .folder-actions {
+    position: absolute;
+    right: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    padding-left: 1.25rem;
+    background: linear-gradient(to right, transparent, var(--bg-secondary) 1.1rem);
     opacity: 0;
     transition: opacity 0.12s;
   }
