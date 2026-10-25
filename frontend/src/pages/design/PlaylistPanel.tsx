@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState, type DragEvent, type ReactNode } from 'react';
+import { Fragment, useEffect, useRef, useState, type DragEvent, type ReactNode } from 'react';
 import type { Design, Playlist, PlaylistKind } from '../../types';
-import SavedList, { trashIcon } from './SavedList';
+import SavedList, { EDIT_ICON, trashIcon } from './SavedList';
 import { FolderHeaderRow, type FolderControls } from './Folders';
-import { groupByFolder, groupKey, hasFolders, useCollapsedGroups } from '../../utils/folders';
+import { canonicalFolder, groupByFolder, groupKey, hasFolders, MAX_FOLDER_LENGTH, normalizeFolder, sameFolder, useCollapsedGroups } from '../../utils/folders';
 import { formatSeconds, KIND_LABEL, MAX_REPEAT_COUNT, playlistKind, type EditingPlaylistItem, type PlaylistEditor } from './editors';
+import InlineDesignEditor, { type DesignType, type InlineEditContext, type InlineSaveResult } from './InlineDesignEditor';
 
 interface PlaylistPanelProps {
   // A scene editor or a playlist editor (editor.kind)
@@ -22,7 +23,13 @@ interface PlaylistPanelProps {
   playingIndex: number | null;
   onPlay: (startIndex: number) => void;
   onStop: () => void;
+  // Edit designs in place (pencil on each design row, + New static / motion); scenes only
+  inline?: InlineEditContext;
 }
+
+// The design open in the inline editor: a row's, or a new one (shown as a draft row at the end)
+type InlineTarget = { kind: 'item'; key: string } | { kind: 'new'; type: DesignType; id: number };
+let nextDraftId = 0;
 
 type PickerType = 'static' | 'motion' | 'scene' | 'playlist';
 const PICKER_TYPES: { type: PickerType; label: string }[] = [
@@ -48,7 +55,7 @@ const STOP_ICON = <svg width="12" height="12" viewBox="0 0 24 24" fill="currentC
 const CONVERT_ICON = <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 014-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 01-4 4H3"/></svg>;
 
 export default function PlaylistPanel({
-  editor, designs, playlists, sidebarHeader, onSave, onConvert, onMove, folders, isPlaying, playingIndex, onPlay, onStop,
+  editor, designs, playlists, sidebarHeader, onSave, onConvert, onMove, folders, isPlaying, playingIndex, onPlay, onStop, inline,
 }: PlaylistPanelProps) {
   const { selectedPlaylist, items, dragKey, isScene, noun } = editor;
   const kindLabel = KIND_LABEL[editor.kind];
@@ -90,6 +97,92 @@ export default function PlaylistPanel({
     return 'This effect has no fixed cycle (it is random or custom code), so it can only play for a number of seconds';
   };
   const itemLabel = (item: EditingPlaylistItem) => item.name ?? 'item';
+
+  // --- inline design editing (one editor open at a time) ---
+
+  const [inlineTarget, setInlineTarget] = useState<InlineTarget | null>(null);
+  const inlineOpenRef = useRef(false);
+  inlineOpenRef.current = inlineTarget !== null;
+  const inlineEnd = inline?.onEditEnd;
+  const inlineEndRef = useRef(inlineEnd);
+  inlineEndRef.current = inlineEnd;
+  // Leaving the tab with an editor open still hands the preview back
+  useEffect(() => () => { if (inlineOpenRef.current) inlineEndRef.current?.(); }, []);
+
+  // True when nothing unsaved would be lost, or the user agrees to lose it
+  const confirmDiscard = () =>
+    !inline?.dirtyRef.current || confirm('Discard the unsaved changes to the design you are editing?');
+
+  const openInline = (target: InlineTarget) => {
+    if (!inline || !confirmDiscard()) return;
+    if (!inlineTarget) inline.onEditStart();
+    inline.dirtyRef.current = false;
+    setInlineTarget(target);
+  };
+  const closeInline = (force = false): boolean => {
+    if (!inline || !inlineTarget) return true;
+    if (!force && !confirmDiscard()) return false;
+    inline.dirtyRef.current = false;
+    setInlineTarget(null);
+    inline.onEditEnd();
+    return true;
+  };
+  const toggleInline = (key: string) => {
+    if (inlineTarget?.kind === 'item' && inlineTarget.key === key) closeInline();
+    else openInline({ kind: 'item', key });
+  };
+
+  // The edited row went away (another scene loaded, row removed): close without asking
+  useEffect(() => {
+    if (inlineTarget?.kind === 'item' && !items.some((i) => i.key === inlineTarget.key)) closeInline(true);
+  });
+
+  // New designs and copies are filed with the scene: in its folder, or (an unfiled scene) in a new
+  // folder named after it, which the scene then moves into too. Unsaved scenes have no name yet.
+  const savedScene = selectedPlaylist ? playlists.find((p) => p.id === selectedPlaylist.id) ?? selectedPlaylist : null;
+  const sceneFolder = normalizeFolder(savedScene?.folder);
+  const sceneNamedFolder = savedScene
+    ? canonicalFolder((normalizeFolder(savedScene.name) ?? '').slice(0, MAX_FOLDER_LENGTH).trim(), inline?.folders ?? [])
+    : null;
+  const newDesignFolder = sceneFolder ?? (sceneNamedFolder || null);
+  const cantCreate = savedScene ? undefined : `Save the ${noun} first; new designs are filed in a folder with it`;
+
+  const onInlineSaved = (key: string | null, result: InlineSaveResult) => {
+    if (result.as === 'copy' && key) editor.replaceItemDesign(key, result.design);
+    if (result.as === 'new') editor.addNewDesign(result.design);
+    if (result.as !== 'update' && savedScene && !sceneFolder && result.folder && sceneNamedFolder && sameFolder(result.folder, sceneNamedFolder)) {
+      void onMove(savedScene.id, result.folder);
+    }
+    closeInline(true);
+  };
+
+  // Other scenes / playlists and other rows of this one that play the design
+  const usageOf = (designId: string) => ({
+    lists: playlists.filter((p) => p.id !== selectedPlaylist?.id && p.items.some((i) => i.design_id === designId)).length,
+    rows: items.filter((i) => i.design_id === designId).length - 1,
+  });
+
+  const renderInlineEditor = (key: string, design: Design | null, type: DesignType) => inline && (
+    <InlineDesignEditor
+      key={key}
+      ctx={inline}
+      design={design}
+      type={type}
+      usage={design ? usageOf(design.id) : { lists: 0, rows: 0 }}
+      defaultFolder={newDesignFolder}
+      cantCreate={cantCreate}
+      noun={noun}
+      onSaved={(result) => onInlineSaved(inlineTarget?.kind === 'item' ? inlineTarget.key : null, result)}
+      onCancel={() => closeInline(true)}
+    />
+  );
+
+  // Guarded versions of actions that would drop the open inline editor
+  const guarded = (action: () => void) => () => { if (closeInline()) action(); };
+  const removeItem = (key: string) => {
+    if (inlineTarget?.kind === 'item' && inlineTarget.key === key && !closeInline()) return;
+    editor.removeItem(key);
+  };
 
   // --- Add picker: grouped by folder, then type; rows can be dragged into the item list ---
 
@@ -217,6 +310,25 @@ export default function PlaylistPanel({
     );
   });
 
+  // Start a new design right in the scene; it's added at the end when saved
+  const addNewButtons = inline && (
+    <div className="playlist-add-new" role="group" aria-label={`New design for this ${noun}`}>
+      {(['static', 'motion'] as const).map((type) => (
+        <button
+          key={type}
+          type="button"
+          className={`btn btn-sm ${inlineTarget?.kind === 'new' && inlineTarget.type === type ? 'btn-primary' : 'btn-secondary'}`}
+          onClick={() => openInline({ kind: 'new', type, id: ++nextDraftId })}
+          disabled={!!cantCreate}
+          title={cantCreate}
+        >
+          + New {type}
+        </button>
+      ))}
+      {cantCreate && <span className="playlist-add-new-hint">Save the {noun} to make new designs here.</span>}
+    </div>
+  );
+
   return (
     <div className="design-layout">
       <div className="design-sidebar">
@@ -238,21 +350,21 @@ export default function PlaylistPanel({
                 style={{ padding: '0.2rem' }}
                 title={isScene ? 'Convert to playlist' : 'Convert to scene (designs only)'}
                 aria-label={`Convert ${p.name} to ${otherKind}`}
-                onClick={(e) => { e.stopPropagation(); onConvert(p.id, otherKind); }}
+                onClick={(e) => { e.stopPropagation(); guarded(() => onConvert(p.id, otherKind))(); }}
               >
                 {CONVERT_ICON}
               </button>
             ),
           }))}
           selectedId={selectedPlaylist?.id}
-          onSelect={(id) => { const p = playlists.find((x) => x.id === id); if (p) editor.load(p); }}
+          onSelect={(id) => { const p = playlists.find((x) => x.id === id); if (p) guarded(() => editor.load(p))(); }}
           onRename={editor.rename}
           onDelete={editor.remove}
           scope={editor.kind}
           folders={folders}
           onMove={onMove}
         />
-        <button className="btn btn-primary btn-sm" style={{ width: '100%' }} onClick={editor.startNew}>New {kindLabel}</button>
+        <button className="btn btn-primary btn-sm" style={{ width: '100%' }} onClick={guarded(editor.startNew)}>New {kindLabel}</button>
       </div>
 
       {/* Right: Playlist / Scene Editor */}
@@ -293,25 +405,31 @@ export default function PlaylistPanel({
             </div>
           </div>
           <div className="playlist-drop-zone" onDragOver={onEditorDragOver} onDragLeave={onEditorDragLeave} onDrop={onEditorDrop}>
-          {items.length === 0 ? (
-            <p className={`playlist-empty${pickerDrag ? ' drop-active' : ''}`}>
-              {isScene
-                ? 'Add designs from the list below to build your scene. It plays them in order, then starts again.'
-                : 'Add designs, scenes or playlists from the list below to build your playlist.'}
-              <span className="drag-hint"> You can also drag them in.</span>
-            </p>
+          {items.length === 0 && inlineTarget?.kind !== 'new' ? (
+            <>
+              <p className={`playlist-empty${pickerDrag ? ' drop-active' : ''}`}>
+                {isScene
+                  ? `Add designs from the list below${inline ? ', or make a new one here,' : ''} to build your scene. It plays them in order, then starts again.`
+                  : 'Add designs, scenes or playlists from the list below to build your playlist.'}
+                <span className="drag-hint"> You can also drag them in.</span>
+              </p>
+              {addNewButtons}
+            </>
           ) : (
             <div className="playlist-items">
               {items.map((item, idx) => {
                 const mode = editor.effectiveMode(item);
                 const noTimes = noTimesReason(item);
                 const label = itemLabel(item);
+                const itemDesign = item.design_id ? designs.find((d) => d.id === item.design_id) : undefined;
+                const editing = inlineTarget?.kind === 'item' && inlineTarget.key === item.key;
                 return (
+                <Fragment key={item.key}>
                 <div
-                  key={item.key}
                   data-item-index={idx}
                   className={[
                     'playlist-item',
+                    editing ? 'editing' : '',
                     dragKey === item.key ? 'dragging' : '',
                     isPlaying && playingIndex === idx ? 'playing' : '',
                     dropIndex === idx ? 'drop-before' : '',
@@ -367,18 +485,49 @@ export default function PlaylistPanel({
                     <button type="button" className="btn-icon" ref={moveButtonRef(item.key, -1)} aria-label={`Move ${label} up`} disabled={idx === 0} onClick={() => move(item.key, -1)}>↑</button>
                     <button type="button" className="btn-icon" ref={moveButtonRef(item.key, 1)} aria-label={`Move ${label} down`} disabled={idx === items.length - 1} onClick={() => move(item.key, 1)}>↓</button>
                   </span>
+                  {inline && item.design_id && (
+                    <button
+                      className={`btn-icon playlist-item-edit${editing ? ' active' : ''}`}
+                      style={{ padding: '0.2rem' }}
+                      title={!itemDesign?.data ? 'This design can\'t be edited (missing or corrupt)' : editing ? 'Close the editor' : 'Edit this design here'}
+                      aria-label={`${editing ? 'Close editor for' : 'Edit'} ${label}`}
+                      aria-expanded={editing}
+                      disabled={!itemDesign?.data}
+                      onClick={() => toggleInline(item.key)}
+                    >
+                      {EDIT_ICON}
+                    </button>
+                  )}
                   <button className="btn-icon playlist-item-play" style={{ padding: '0.2rem' }} title="Play from here" aria-label={`Play from ${label}`} onClick={() => onPlay(idx)}>
                     {PLAY_ICON}
                   </button>
-                  <button className="btn-icon" style={{ padding: '0.2rem', color: 'var(--danger-color)' }} title="Remove" aria-label={`Remove ${label}`} onClick={() => editor.removeItem(item.key)}>
+                  <button className="btn-icon" style={{ padding: '0.2rem', color: 'var(--danger-color)' }} title="Remove" aria-label={`Remove ${label}`} onClick={() => removeItem(item.key)}>
                     {trashIcon(14)}
                   </button>
                 </div>
+                {editing && itemDesign && renderInlineEditor(item.key, itemDesign, itemDesign.type)}
+                </Fragment>
                 );
               })}
-              <div className="playlist-total">
-                {editor.mode === 'random' ? 'One round of every item' : 'Total'} <strong>{formatSeconds(editor.totalSeconds)}</strong>
-              </div>
+              {inlineTarget?.kind === 'new' && (
+                <>
+                  <div className="playlist-item editing playlist-item-draft">
+                    <span className="playlist-item-name">
+                      New {inlineTarget.type} design{' '}
+                      <span style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }}>(not saved yet; added here when you save)</span>
+                    </span>
+                  </div>
+                  {renderInlineEditor(`new-${inlineTarget.id}`, null, inlineTarget.type)}
+                </>
+              )}
+              {(() => {
+                const total = items.length > 0 && (
+                  <div className="playlist-total">
+                    {editor.mode === 'random' ? 'One round of every item' : 'Total'} <strong>{formatSeconds(editor.totalSeconds)}</strong>
+                  </div>
+                );
+                return inline ? <div className="playlist-footer">{addNewButtons}{total}</div> : total;
+              })()}
             </div>
           )}
           </div>

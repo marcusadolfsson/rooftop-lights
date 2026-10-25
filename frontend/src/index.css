@@ -1030,6 +1030,114 @@ body {
   color: var(--success-color);
 }
 
+/* Scene editor: a design row's inline editor opens directly under it */
+.playlist-item.editing {
+  border-color: var(--primary-color);
+}
+
+.playlist-item-edit.active {
+  color: var(--primary-color);
+}
+
+.playlist-item-draft {
+  border-style: dashed;
+}
+
+.inline-editor {
+  margin: -0.125rem 0 0.375rem 1rem;
+  padding: 0.75rem;
+  background-color: var(--bg-primary);
+  border: 1px solid var(--primary-color);
+  border-left-width: 3px;
+  border-radius: 0.375rem;
+}
+
+.inline-editor-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.inline-editor-title {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.inline-editor-title strong {
+  color: var(--text-primary);
+}
+
+.inline-editor-type {
+  margin-left: 0.375rem;
+  font-size: 0.75rem;
+}
+
+.inline-editor-actions {
+  flex-wrap: wrap;
+}
+
+.inline-editor-usage {
+  margin: 0 0 0.75rem;
+  padding: 0.4rem 0.6rem;
+  font-size: 0.8rem;
+  color: var(--text-primary);
+  background-color: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  border-radius: 0.25rem;
+}
+
+/* The scene card doesn't lift on hover while it holds an editor (painting would shake it) */
+.card:has(.inline-editor):hover {
+  transform: none;
+  box-shadow: none;
+}
+
+.inline-editor-layout .design-main {
+  min-width: 0;
+}
+
+.inline-editor-layout .card:hover {
+  transform: none;
+  box-shadow: none;
+}
+
+.inline-editor-layout .card:last-child {
+  margin-bottom: 0;
+}
+
+/* + New static / + New motion, beside the scene total */
+.playlist-footer {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding-top: 0.25rem;
+}
+
+.playlist-footer .playlist-total {
+  margin-left: auto;
+  padding-top: 0;
+}
+
+.playlist-add-new {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.playlist-add-new-hint {
+  align-self: center;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+.playlist-empty + .playlist-add-new {
+  justify-content: center;
+}
+
 /* Schedule Calendar */
 .schedule-list {
   display: flex;
@@ -2056,6 +2164,34 @@ body {
   .playlist-item .form-input,
   .playlist-item .form-select {
     min-height: 36px;
+  }
+
+  /* Inline design editor: full width, everything stacked */
+  .inline-editor {
+    margin-left: 0;
+    padding: 0.5rem;
+    border-left-width: 1px;
+    border-top-width: 3px;
+  }
+
+  .inline-editor-actions {
+    width: 100%;
+  }
+
+  .inline-editor-actions .btn {
+    flex: 1 1 auto;
+  }
+
+  .inline-editor-layout .card {
+    padding: 0.75rem;
+  }
+
+  .playlist-add-new {
+    flex: 1 1 100%;
+  }
+
+  .playlist-add-new .btn {
+    flex: 1 1 0;
   }
 
   .saved-designs-table td {

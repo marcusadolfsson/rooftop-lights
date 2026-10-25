@@ -26,7 +26,67 @@ export default function StaticPanel({
   editor, layout, designs, sidebarHeader, currentColor, setCurrentColor, hasRGBW,
   onSaveAs, onRenameDesign, onDeleteDesign, onMoveDesign, folders,
 }: StaticPanelProps) {
-  const { selectedDesign, colors, hasChanges, colorTool } = editor;
+  const { selectedDesign, hasChanges } = editor;
+  return (
+    <div className="design-layout">
+      <div className="design-sidebar">
+        {sidebarHeader}
+        <SavedList
+          title="Saved Designs"
+          items={designs.filter((d) => d.type === 'static')}
+          selectedId={selectedDesign?.id}
+          onSelect={(id) => { const d = designs.find((x) => x.id === id); if (d) editor.load(d); }}
+          onRename={onRenameDesign}
+          onDelete={onDeleteDesign}
+          scope="static"
+          folders={folders}
+          onMove={onMoveDesign}
+        />
+      </div>
+
+      <StaticDesignEditor
+        editor={editor}
+        layout={layout}
+        currentColor={currentColor}
+        setCurrentColor={setCurrentColor}
+        hasRGBW={hasRGBW}
+        toolbar={
+          <div className="btn-group" style={{ marginBottom: '0.5rem' }}>
+            {selectedDesign ? (
+              <button className="btn btn-primary btn-sm" onClick={editor.startNew}>New</button>
+            ) : (
+              hasChanges && <button className="btn btn-secondary btn-sm" onClick={editor.startNew}>Clear</button>
+            )}
+            {hasChanges && selectedDesign && <button className="btn btn-primary btn-sm" onClick={editor.save}>Save</button>}
+            {hasChanges && selectedDesign && <button className="btn btn-secondary btn-sm" onClick={onSaveAs}>Save As</button>}
+            {hasChanges && !selectedDesign && <button className="btn btn-primary btn-sm" onClick={onSaveAs}>Save</button>}
+            {selectedDesign && hasChanges && <button className="btn btn-secondary btn-sm" onClick={editor.cancel}>Cancel</button>}
+            {/* Keeps the row's height while it's empty, so the first paint stroke doesn't push the grid down mid-drag */}
+            {!selectedDesign && !hasChanges && <button type="button" className="btn btn-sm btn-placeholder" aria-hidden="true" tabIndex={-1} disabled>Clear</button>}
+          </div>
+        }
+      />
+    </div>
+  );
+}
+
+interface StaticDesignEditorProps {
+  editor: StaticEditor;
+  layout: LayoutData;
+  currentColor: RGBW;
+  setCurrentColor: (color: RGBW) => void;
+  hasRGBW: boolean;
+  // Buttons above the grid (New / Save / Cancel ...), supplied by whoever hosts the editor
+  toolbar?: ReactNode;
+}
+
+/**
+ * The static painter: wall grids, copy-wall buttons and the color picker. Renders the editor
+ * column and the picker column, for a `.design-layout` around it (the Static tab, or inline in
+ * the scene editor).
+ */
+export function StaticDesignEditor({ editor, layout, currentColor, setCurrentColor, hasRGBW, toolbar }: StaticDesignEditorProps) {
+  const { colors, colorTool } = editor;
   const [selectedLights, setSelectedLights] = useState<Set<number>>(new Set());
   // Drag-to-paint state; refs because pointermove reads them between renders
   const draggingRef = useRef(false);
@@ -108,37 +168,9 @@ export default function StaticPanel({
   const copyButtonStyle = { padding: '0.2rem 0.5rem', fontSize: '0.7rem' };
 
   return (
-    <div className="design-layout">
-      <div className="design-sidebar">
-        {sidebarHeader}
-        <SavedList
-          title="Saved Designs"
-          items={designs.filter((d) => d.type === 'static')}
-          selectedId={selectedDesign?.id}
-          onSelect={(id) => { const d = designs.find((x) => x.id === id); if (d) editor.load(d); }}
-          onRename={onRenameDesign}
-          onDelete={onDeleteDesign}
-          scope="static"
-          folders={folders}
-          onMove={onMoveDesign}
-        />
-      </div>
-
-      {/* Center: Light Matrix */}
+    <>
       <div className="design-main">
-        <div className="btn-group" style={{ marginBottom: '0.5rem' }}>
-          {selectedDesign ? (
-            <button className="btn btn-primary btn-sm" onClick={editor.startNew}>New</button>
-          ) : (
-            hasChanges && <button className="btn btn-secondary btn-sm" onClick={editor.startNew}>Clear</button>
-          )}
-          {hasChanges && selectedDesign && <button className="btn btn-primary btn-sm" onClick={editor.save}>Save</button>}
-          {hasChanges && selectedDesign && <button className="btn btn-secondary btn-sm" onClick={onSaveAs}>Save As</button>}
-          {hasChanges && !selectedDesign && <button className="btn btn-primary btn-sm" onClick={onSaveAs}>Save</button>}
-          {selectedDesign && hasChanges && <button className="btn btn-secondary btn-sm" onClick={editor.cancel}>Cancel</button>}
-          {/* Keeps the row's height while it's empty, so the first paint stroke doesn't push the grid down mid-drag */}
-          {!selectedDesign && !hasChanges && <button type="button" className="btn btn-sm btn-placeholder" aria-hidden="true" tabIndex={-1} disabled>Clear</button>}
-        </div>
+        {toolbar}
         {isMobile && layout.walls.length > 1 && (
           <div className="wall-switcher" role="group" aria-label="Wall">
             {layout.walls.map((wall) => (
@@ -222,6 +254,6 @@ export default function StaticPanel({
           onToolChange={editor.setColorTool}
         />
       </div>
-    </div>
+    </>
   );
 }

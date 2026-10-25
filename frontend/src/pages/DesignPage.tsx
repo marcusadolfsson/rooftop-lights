@@ -9,6 +9,7 @@ import PlaylistPanel from './design/PlaylistPanel';
 import { AiPromptModal, NameModal } from './design/Modals';
 import { useMotionEditor, usePlaylistEditor, useStaticEditor } from './design/editors';
 import type { FolderControls } from './design/Folders';
+import type { InlineEditContext } from './design/InlineDesignEditor';
 import { canonicalFolder, folderNames, renameCollapsedFolder, sameFolder } from '../utils/folders';
 import type { Design, EffectType, Playlist, PlaylistKind, RGBW, LayoutData } from '../types';
 
@@ -310,6 +311,56 @@ function DesignPage() {
     return () => { cancelled = true; clearInterval(interval); };
   }, [playback]);
 
+  // --- designs edited inline in the scene editor ---
+
+  // Unsaved changes in the open inline editor (guards switching tabs)
+  const inlineDirtyRef = useRef(false);
+  // The scene item that was playing when the inline editor opened, to carry on from on close
+  const inlineResumeRef = useRef<number | null>(null);
+  const [inlineEnded, setInlineEnded] = useState<{ resume: number | null } | null>(null);
+
+  // The preview shows the design being edited instead of the scene
+  const handleInlineEditStart = () => {
+    inlineResumeRef.current = playback?.kind === 'scene' ? (playingIndex ?? playback.startIndex) : null;
+    setPlayback(null);
+    setPlayingIndex(null);
+  };
+  // Runs after the render that applied the save (a copy swapped in, a new design added),
+  // so the resumed playback has the scene's current items
+  const handleInlineEditEnd = () => setInlineEnded({ resume: inlineResumeRef.current });
+  useEffect(() => {
+    if (!inlineEnded) return;
+    setInlineEnded(null);
+    inlineResumeRef.current = null;
+    if (playback) return; // Play was pressed while editing
+    const items = sceneEditor.items;
+    // Back to the scene where it was playing; with Live Preview on the lights go back to the scene too
+    if (listKind === 'scene' && items.length > 0 && (inlineEnded.resume !== null || preview.isLiveRef.current)) {
+      handlePlay('scene', Math.min(inlineEnded.resume ?? 0, items.length - 1));
+    } else if (!preview.isLiveRef.current) {
+      preview.clearSoft();
+    }
+  }, [inlineEnded]);
+
+  const confirmLeaveInline = () =>
+    !inlineDirtyRef.current || confirm('Discard the unsaved changes to the design you are editing?');
+
+  const inlineContext: InlineEditContext | undefined = layout ? {
+    preview,
+    reload: loadData,
+    setError,
+    active: isVisible,
+    layout,
+    effectTypes,
+    hasRGBW,
+    currentColor,
+    setCurrentColor,
+    folders: allFolders,
+    dirtyRef: inlineDirtyRef,
+    onEditStart: handleInlineEditStart,
+    onEditEnd: handleInlineEditEnd,
+  } : undefined;
+
   const handleSavePlaylist = async (kind: PlaylistKind, name?: string, folder: string | null = null) => {
     const result = await editorFor(kind).save(name, folder);
     if (result === 'needs-name') setPlaylistSaveModal(kind);
@@ -478,7 +529,7 @@ function DesignPage() {
             role="tab"
             aria-selected={activeTab === tab.id}
             className={`tab ${activeTab === tab.id ? 'active' : ''}`}
-            onClick={() => setActiveTab(tab.id)}
+            onClick={() => { if (tab.id === activeTab || confirmLeaveInline()) setActiveTab(tab.id); }}
           >
             {tab.label}
           </button>
@@ -666,6 +717,7 @@ function DesignPage() {
           playingIndex={playback?.kind === listKind ? playingIndex : null}
           onPlay={(startIndex) => handlePlay(activeTab === 'scenes' ? 'scene' : 'playlist', startIndex)}
           onStop={handleStopPlayback}
+          inline={activeTab === 'scenes' ? inlineContext : undefined}
         />
       )}
 

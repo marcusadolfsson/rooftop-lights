@@ -92,7 +92,8 @@ router.post('/', (req: Request, res: Response) => {
   `).run(id, name, type, JSON.stringify(data), folder.folder);
 
   invalidateSchedule();
-  res.json({ id, name, type, data, folder: folder.folder });
+  // Same shape as GET (cycleSeconds included), so a new design can go straight into a scene
+  res.json(parseRow({ id, name, type, data: JSON.stringify(data), folder: folder.folder }));
 });
 
 // Update a design

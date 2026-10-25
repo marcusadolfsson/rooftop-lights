@@ -38,19 +38,8 @@ export default function MotionPanel({
   editor, designs, effectTypes, walls, sidebarHeader, currentColor, setCurrentColor, hasRGBW,
   onSaveAs, onRenameDesign, onDeleteDesign, onMoveDesign, folders, onOpenAiGenerator, onOpenAiEditor,
 }: MotionPanelProps) {
-  const { selectedDesign, effect, colors, speed, scope, params, selectedColorIdx, hasChanges } = editor;
-  const isAi = effect?.type === 'ai';
-  const isMobile = useIsMobile();
-  const hasColors = !!effect && effect.defaultColors.length > 0;
-  const isPalette = !!effect && isPaletteEffect(effect);
-
+  const { selectedDesign, effect, hasChanges } = editor;
   const pickColor = (first: RGBW | undefined) => { if (first) setCurrentColor({ ...first }); };
-
-  // Picker changes recolor the selected palette entry
-  const handleColorChange = (color: RGBW) => {
-    setCurrentColor(color);
-    editor.setColorAt(selectedColorIdx, color);
-  };
 
   return (
     <div className="design-layout">
@@ -69,19 +58,74 @@ export default function MotionPanel({
         />
       </div>
 
-      {/* Center: Action buttons + Effect Config */}
+      <MotionDesignEditor
+        editor={editor}
+        effectTypes={effectTypes}
+        walls={walls}
+        currentColor={currentColor}
+        setCurrentColor={setCurrentColor}
+        hasRGBW={hasRGBW}
+        onOpenAiGenerator={onOpenAiGenerator}
+        onOpenAiEditor={onOpenAiEditor}
+        toolbar={
+          <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.75rem', flexWrap: 'wrap' }}>
+            {selectedDesign ? (
+              <button className="btn btn-primary btn-sm" onClick={editor.clear}>New</button>
+            ) : (
+              effect && <button className="btn btn-secondary btn-sm" onClick={editor.clear}>Clear</button>
+            )}
+            {hasChanges && selectedDesign && <button className="btn btn-primary btn-sm" onClick={editor.save}>Save</button>}
+            {hasChanges && selectedDesign && <button className="btn btn-secondary btn-sm" onClick={onSaveAs}>Save As</button>}
+            {!selectedDesign && effect && <button className="btn btn-primary btn-sm" onClick={onSaveAs}>Save</button>}
+            {selectedDesign && hasChanges && <button className="btn btn-secondary btn-sm" onClick={() => pickColor(editor.cancel())}>Cancel</button>}
+          </div>
+        }
+      />
+    </div>
+  );
+}
+
+interface MotionDesignEditorProps {
+  editor: MotionEditor;
+  // Offered in the effect picker (shown while the editor holds no saved design)
+  effectTypes: EffectType[];
+  walls: Wall[];
+  currentColor: RGBW;
+  setCurrentColor: (color: RGBW) => void;
+  hasRGBW: boolean;
+  // Buttons above the settings (New / Save / Cancel ...), supplied by whoever hosts the editor
+  toolbar?: ReactNode;
+  // AI generate / edit; without them the AI prompt shows but can't be edited here
+  onOpenAiGenerator?: () => void;
+  onOpenAiEditor?: () => void;
+}
+
+/**
+ * The motion editor: effect picker, colors (palette +/−), speed, scope and parameters, plus the
+ * color picker. Renders the editor column and the picker column, for a `.design-layout` around it
+ * (the Motion tab, or inline in the scene editor).
+ */
+export function MotionDesignEditor({
+  editor, effectTypes, walls, currentColor, setCurrentColor, hasRGBW, toolbar, onOpenAiGenerator, onOpenAiEditor,
+}: MotionDesignEditorProps) {
+  const { selectedDesign, effect, colors, speed, scope, params, selectedColorIdx } = editor;
+  const isAi = effect?.type === 'ai';
+  const isMobile = useIsMobile();
+  const hasColors = !!effect && effect.defaultColors.length > 0;
+  const isPalette = !!effect && isPaletteEffect(effect);
+
+  const pickColor = (first: RGBW | undefined) => { if (first) setCurrentColor({ ...first }); };
+
+  // Picker changes recolor the selected palette entry
+  const handleColorChange = (color: RGBW) => {
+    setCurrentColor(color);
+    editor.setColorAt(selectedColorIdx, color);
+  };
+
+  return (
+    <>
       <div className="design-main">
-        <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.75rem', flexWrap: 'wrap' }}>
-          {selectedDesign ? (
-            <button className="btn btn-primary btn-sm" onClick={editor.clear}>New</button>
-          ) : (
-            effect && <button className="btn btn-secondary btn-sm" onClick={editor.clear}>Clear</button>
-          )}
-          {hasChanges && selectedDesign && <button className="btn btn-primary btn-sm" onClick={editor.save}>Save</button>}
-          {hasChanges && selectedDesign && <button className="btn btn-secondary btn-sm" onClick={onSaveAs}>Save As</button>}
-          {!selectedDesign && effect && <button className="btn btn-primary btn-sm" onClick={onSaveAs}>Save</button>}
-          {selectedDesign && hasChanges && <button className="btn btn-secondary btn-sm" onClick={() => pickColor(editor.cancel())}>Cancel</button>}
-        </div>
+        {toolbar}
         {!selectedDesign && (
           <div className="card">
             <div className="card-header"><h3 className="card-title">Effect Type</h3></div>
@@ -92,7 +136,7 @@ export default function MotionPanel({
                   className={`btn btn-sm ${effect?.type === fx.type ? 'btn-primary' : 'btn-secondary'}`}
                   aria-pressed={effect?.type === fx.type}
                   onClick={() => {
-                    if (fx.type === 'ai' && !isAi) onOpenAiGenerator();
+                    if (fx.type === 'ai' && !isAi) onOpenAiGenerator?.();
                     else pickColor(editor.selectEffect(fx));
                   }}
                   title={fx.description}
@@ -109,13 +153,15 @@ export default function MotionPanel({
             {isAi && params.prompt && (
               <div style={{ marginBottom: '0.75rem', padding: '0.5rem 0.75rem', background: 'var(--bg-tertiary)', borderRadius: '4px', fontSize: '0.8rem', color: 'var(--text-secondary)', display: 'flex', alignItems: 'flex-start', gap: '0.5rem' }}>
                 <span style={{ fontStyle: 'italic', flex: 1 }}>{params.prompt as string}</span>
-                <button
-                  className="btn btn-secondary"
-                  style={{ padding: '0.15rem 0.5rem', fontSize: '0.75rem', flexShrink: 0 }}
-                  onClick={onOpenAiEditor}
-                >
-                  Edit
-                </button>
+                {onOpenAiEditor && (
+                  <button
+                    className="btn btn-secondary"
+                    style={{ padding: '0.15rem 0.5rem', fontSize: '0.75rem', flexShrink: 0 }}
+                    onClick={onOpenAiEditor}
+                  >
+                    Edit
+                  </button>
+                )}
               </div>
             )}
             <div className="fx-settings">
@@ -290,7 +336,7 @@ export default function MotionPanel({
       <div className="color-picker-column">
         {hasColors && !isMobile && <ColorPicker color={currentColor} onChange={handleColorChange} hasRGBW={hasRGBW} />}
       </div>
-    </div>
+    </>
   );
 }
 

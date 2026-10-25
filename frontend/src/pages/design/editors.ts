@@ -72,28 +72,31 @@ export function useStaticEditor({ preview, reload, setError, autoPreview }: Edit
 
   const designData = (): StaticDesignData => ({ colors, ...(prompt ? { prompt } : {}) });
 
-  const save = async () => {
-    if (!selectedDesign) return;
+  // Both return whether it saved; saveAs returns the new design
+  const save = async (): Promise<boolean> => {
+    if (!selectedDesign) return false;
     try {
       await designsAPI.update(selectedDesign.id, { name: selectedDesign.name, data: designData() });
-      setSavedJson(JSON.stringify(colors));
-      await reload();
-    } catch (err) {
-      setError(errorMessage(err, 'Failed to save design'));
-    }
-  };
-
-  const saveAs = async (name: string, folder: string | null = null): Promise<boolean> => {
-    try {
-      const created = await designsAPI.create({ name, type: 'static', data: designData(), folder });
-      // Select the copy so the next Save updates it, not the original
-      setSelectedDesign(created);
       setSavedJson(JSON.stringify(colors));
       await reload();
       return true;
     } catch (err) {
       setError(errorMessage(err, 'Failed to save design'));
       return false;
+    }
+  };
+
+  const saveAs = async (name: string, folder: string | null = null): Promise<Design | null> => {
+    try {
+      const created = await designsAPI.create({ name, type: 'static', data: designData(), folder });
+      // Select the copy so the next Save updates it, not the original
+      setSelectedDesign(created);
+      setSavedJson(JSON.stringify(colors));
+      await reload();
+      return created;
+    } catch (err) {
+      setError(errorMessage(err, 'Failed to save design'));
+      return null;
     }
   };
 
@@ -290,31 +293,34 @@ export function useMotionEditor({ preview, reload, setError, autoPreview, effect
   const designData = (): MotionDesignData | null =>
     effect ? { type: effect.type, colors, params: withoutStaleWallIds(scope, params), speed, scope } : null;
 
-  const save = async () => {
+  // Both return whether it saved; saveAs returns the new design
+  const save = async (): Promise<boolean> => {
     const data = designData();
-    if (!selectedDesign || !data) return;
+    if (!selectedDesign || !data) return false;
     try {
       await designsAPI.update(selectedDesign.id, { name: selectedDesign.name, data });
-      setSavedJson(motionSnapshot(state));
-      await reload();
-    } catch (err) {
-      setError(errorMessage(err, 'Failed to save design'));
-    }
-  };
-
-  const saveAs = async (name: string, folder: string | null = null): Promise<boolean> => {
-    const data = designData();
-    if (!data) return false;
-    try {
-      const created = await designsAPI.create({ name, type: 'motion', data, folder });
-      // Select the copy so the next Save updates it, not the original
-      setSelectedDesign(created);
       setSavedJson(motionSnapshot(state));
       await reload();
       return true;
     } catch (err) {
       setError(errorMessage(err, 'Failed to save design'));
       return false;
+    }
+  };
+
+  const saveAs = async (name: string, folder: string | null = null): Promise<Design | null> => {
+    const data = designData();
+    if (!data) return null;
+    try {
+      const created = await designsAPI.create({ name, type: 'motion', data, folder });
+      // Select the copy so the next Save updates it, not the original
+      setSelectedDesign(created);
+      setSavedJson(motionSnapshot(state));
+      await reload();
+      return created;
+    } catch (err) {
+      setError(errorMessage(err, 'Failed to save design'));
+      return null;
     }
   };
 
@@ -465,10 +471,9 @@ export function usePlaylistEditor({ reload, setError, designs, playlists, kind }
     setName(playlist.name);
   };
 
-  const designCycle = (designId: string | null): number | null => {
-    const design = designs.find((d) => d.id === designId);
-    return design?.type === 'motion' && design.cycleSeconds ? design.cycleSeconds : null;
-  };
+  const cycleOf = (design: Design | undefined): number | null =>
+    design?.type === 'motion' && design.cycleSeconds ? design.cycleSeconds : null;
+  const designCycle = (designId: string | null): number | null => cycleOf(designs.find((d) => d.id === designId));
 
   // In a scene a design plays one complete cycle when it has one; otherwise (and in playlists)
   // it plays for 10 seconds
@@ -482,11 +487,15 @@ export function usePlaylistEditor({ reload, setError, designs, playlists, kind }
 
   const addDesign = (designId: string, at?: number) => {
     const design = designs.find((d) => d.id === designId);
-    if (!design) return;
-    const once = isScene && designCycle(designId) !== null;
+    if (design) addNewDesign(design, at);
+  };
+
+  // Also takes a design that isn't in `designs` yet (just created in the scene editor)
+  const addNewDesign = (design: Design, at?: number) => {
+    const once = isScene && cycleOf(design) !== null;
     insertAt({
       key: newItemKey(),
-      design_id: designId,
+      design_id: design.id,
       child_playlist_id: null,
       name: design.name,
       design_type: design.type,
@@ -540,6 +549,11 @@ export function usePlaylistEditor({ reload, setError, designs, playlists, kind }
     return effectiveMode(item) === 'times' && cycle !== null ? cycle * item.repeat_count : Math.max(1, item.duration);
   };
   const totalSeconds = items.reduce((sum, i) => sum + itemSeconds(i), 0);
+
+  // Point one item at another design (a copy saved from the scene editor); its timing stays
+  const replaceItemDesign = (key: string, design: Design) => {
+    setItems((prev) => prev.map((i) => (i.key === key ? { ...i, design_id: design.id, name: design.name, design_type: design.type } : i)));
+  };
 
   const removeItem = (key: string) => setItems((prev) => prev.filter((i) => i.key !== key));
 
@@ -642,7 +656,7 @@ export function usePlaylistEditor({ reload, setError, designs, playlists, kind }
     kind, isScene, noun, saved,
     selectedPlaylist, name, setName, items, mode, setMode, dragKey,
     addablePlaylists, cycleSeconds, effectiveMode, itemSeconds, totalSeconds, payloadItems,
-    startNew, load, addDesign, addPlaylist, removeItem, updateItem, save, remove, rename, dragStart, dragOver, dragEnd, moveItem,
+    startNew, load, addDesign, addNewDesign, addPlaylist, replaceItemDesign, removeItem, updateItem, save, remove, rename, dragStart, dragOver, dragEnd, moveItem,
   };
 }
 
