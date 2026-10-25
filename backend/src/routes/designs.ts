@@ -379,6 +379,78 @@ router.get('/effects/types', (req: Request, res: Response) => {
         pause: { type: 'number', default: 0, min: 0, max: 30, step: 0.5, label: 'Pause before looping', unit: ' s' },
       },
     },
+    {
+      type: 'twinkle',
+      name: 'Twinkle',
+      description: 'Lights slowly fade in and out at random, in the palette colors',
+      defaultColors: [{ r: 0, g: 0, b: 0, w: 255 }],
+      params: {
+        density: { type: 'number', default: 0.3, min: 0.05, max: 1, step: 0.05, label: 'Density' },
+        fadeTime: { type: 'number', default: 1.5, min: 0.2, max: 6, step: 0.1, label: 'Fade time', unit: ' s' },
+      },
+    },
+    {
+      type: 'fade',
+      name: 'Color Fade',
+      description: 'The whole roof crossfades through the palette colors',
+      defaultColors: [{ r: 255, g: 0, b: 0, w: 0 }, { r: 0, g: 0, b: 0, w: 255 }, { r: 0, g: 0, b: 255, w: 0 }],
+      params: {
+        holdTime: { type: 'number', default: 3, min: 0, max: 60, step: 0.5, label: 'Hold each color', unit: ' s' },
+        fadeTime: { type: 'number', default: 2, min: 0.1, max: 30, step: 0.1, label: 'Fade time', unit: ' s' },
+      },
+    },
+    {
+      type: 'lightning',
+      name: 'Lightning',
+      description: 'Random strikes of quick flickers (colors: flash, background)',
+      defaultColors: [{ r: 0, g: 0, b: 0, w: 255 }, { r: 0, g: 0, b: 0, w: 0 }],
+      params: {
+        frequency: { type: 'number', default: 12, min: 1, max: 60, label: 'Strikes per minute' },
+        coverage: { type: 'number', default: 0.5, min: 0.1, max: 1, step: 0.05, label: 'Coverage' },
+      },
+    },
+    {
+      type: 'fireworks',
+      name: 'Fireworks',
+      description: 'Bursts that expand from a random point and fade, in the palette colors',
+      defaultColors: [{ r: 255, g: 0, b: 0, w: 0 }, { r: 0, g: 0, b: 0, w: 255 }, { r: 0, g: 255, b: 0, w: 0 }, { r: 0, g: 0, b: 255, w: 0 }],
+      params: {
+        interval: { type: 'number', default: 1.5, min: 0.2, max: 10, step: 0.1, label: 'Time between bursts', unit: ' s' },
+        burstTime: { type: 'number', default: 1.5, min: 0.3, max: 5, step: 0.1, label: 'Burst length', unit: ' s' },
+        burstSize: { type: 'number', default: 6, min: 1, max: 20, label: 'Burst size' },
+      },
+    },
+    {
+      type: 'fire',
+      name: 'Fire',
+      description: 'Flickering flames, hotter along the bottom row',
+      defaultColors: [],
+      params: {
+        intensity: { type: 'number', default: 0.7, min: 0.1, max: 1, step: 0.05, label: 'Intensity' },
+        flicker: { type: 'number', default: 1, min: 0.25, max: 4, step: 0.25, label: 'Flicker speed' },
+      },
+    },
+    {
+      type: 'strobe',
+      name: 'Strobe',
+      description: 'Fast on/off flashing, cycling through the palette',
+      defaultColors: [{ r: 0, g: 0, b: 0, w: 255 }],
+      params: {
+        rate: { type: 'number', default: 4, min: 0.5, max: 15, step: 0.5, label: 'Flashes per second' },
+        duty: { type: 'number', default: 0.3, min: 0.05, max: 0.9, step: 0.05, label: 'On time' },
+      },
+    },
+    {
+      type: 'ripple',
+      name: 'Ripple',
+      description: 'Rings spreading outward from a point (colors: ring, background)',
+      defaultColors: [{ r: 0, g: 0, b: 0, w: 255 }, { r: 0, g: 0, b: 0, w: 0 }],
+      params: {
+        origin: { type: 'number', default: 50, min: 0, max: 100, step: 5, label: 'Origin', unit: '%' },
+        spacing: { type: 'number', default: 8, min: 2, max: 32, label: 'Ring spacing' },
+        width: { type: 'number', default: 1.5, min: 0.5, max: 6, step: 0.5, label: 'Ring width' },
+      },
+    },
   ];
 
   res.json(effectTypes);

@@ -25,13 +25,21 @@ A web app for designing, previewing and scheduling shows on architectural RGBW l
 |---|---|
 | Candy Cane | Diagonal stripes scrolling around the perimeter |
 | Checkerboard | Alternating squares that shift |
-| Comet | Bright head with a fading tail |
+| Comet | Bright head (adjustable size) with a fading tail |
 | Sparkle | Random lights twinkling over a base color |
 | Rainbow | Smooth rainbow cycling across the display |
 | Wave | Sinusoidal brightness wave |
 | Chase | A group of lights chasing around |
+| Meet in the Middle | Two groups start at opposite ends and meet in the middle, with an optional comet tail |
 | Breathe | All lights pulsing together |
 | Text | Scrolling text |
+| Twinkle | Lights fade in and out at random in the palette colors |
+| Color Fade | The whole roof crossfades through the palette |
+| Lightning | Random strikes of quick white flickers over a background color |
+| Fireworks | Bursts that expand from a random point and fade |
+| Fire | Flickering flames, hotter along the bottom row |
+| Strobe | Fast on/off flashing that cycles through the palette |
+| Ripple | Rings spreading outward from a chosen point |
 | AI | Custom JavaScript animation written by the AI designer |
 
 ![Motion effect editor](docs/screenshots/design-motion.png)

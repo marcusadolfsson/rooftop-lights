@@ -145,6 +145,39 @@ function rainbowWithDeadChannels(hue: number, defective: string): RGBW {
   return out;
 }
 
+/** Deterministic pseudo-random in [0, 1) from integers, so playback is repeatable. */
+function rand(...n: number[]): number {
+  let h = 2166136261;
+  for (const v of n) {
+    h ^= v | 0;
+    h = Math.imul(h, 16777619);
+    h ^= h >>> 13;
+    h = Math.imul(h, 0x5bd1e995);
+    h ^= h >>> 15;
+  }
+  return (h >>> 0) / 4294967296;
+}
+
+function scaleColor(c: RGBW, k: number): RGBW {
+  const f = Math.max(0, Math.min(1, k));
+  return { r: Math.round(c.r * f), g: Math.round(c.g * f), b: Math.round(c.b * f), w: Math.round(c.w * f) };
+}
+
+function mixColor(a: RGBW, b: RGBW, t: number): RGBW {
+  const f = Math.max(0, Math.min(1, t));
+  return {
+    r: Math.round(a.r + (b.r - a.r) * f),
+    g: Math.round(a.g + (b.g - a.g) * f),
+    b: Math.round(a.b + (b.b - a.b) * f),
+    w: Math.round(a.w + (b.w - a.w) * f),
+  };
+}
+
+/** Brighter of two colors per channel (for overlapping bursts). */
+function maxColor(a: RGBW, b: RGBW): RGBW {
+  return { r: Math.max(a.r, b.r), g: Math.max(a.g, b.g), b: Math.max(a.b, b.b), w: Math.max(a.w, b.w) };
+}
+
 /** Wall ids a Per Wall effect is limited to (empty = all walls). */
 function selectedWallIds(effect: MotionEffect): string[] {
   const ids = effect.params?.wallIds;
@@ -350,6 +383,20 @@ export class EffectEngine {
         return this.generateChase(effect, frameNum);
       case 'converge':
         return this.generateConverge(effect, frameNum);
+      case 'twinkle':
+        return this.generateTwinkle(effect, frameNum);
+      case 'fade':
+        return this.generateFade(effect, frameNum);
+      case 'lightning':
+        return this.generateLightning(effect, frameNum);
+      case 'fireworks':
+        return this.generateFireworks(effect, frameNum);
+      case 'fire':
+        return this.generateFire(effect, frameNum);
+      case 'strobe':
+        return this.generateStrobe(effect, frameNum);
+      case 'ripple':
+        return this.generateRipple(effect, frameNum);
       case 'breathe':
         return this.generateBreathe(effect, frameNum);
       case 'text':
@@ -712,6 +759,182 @@ export class EffectEngine {
       }
     }
 
+    return frame;
+  }
+
+  // Twinkle - each light slowly fades in and out at random, gentler than Sparkle
+  private generateTwinkle(effect: MotionEffect, frameNum: number): Map<number, RGBW> {
+    const frame = new Map<number, RGBW>();
+    const palette = effect.colors.length > 0 ? effect.colors : [{ r: 0, g: 0, b: 0, w: 255 }];
+    const density = num(effect.params?.density, 0.3, 0.02, 1);
+    const fade = Math.max(2, Math.round(num(effect.params?.fadeTime, 1.5, 0.1, 10) * FPS));
+    // Each light twinkles once per cycle; a longer cycle means fewer lights lit at once
+    const cycle = Math.round((2 * fade) / density);
+
+    for (const light of this.lights) {
+      const offset = Math.floor(rand(light.light_id, 7) * cycle);
+      const t = frameNum + offset;
+      const n = Math.floor(t / cycle);
+      const local = t - n * cycle;
+      if (local < 2 * fade) {
+        const color = palette[Math.floor(rand(light.light_id, n) * palette.length)];
+        frame.set(light.light_id, scaleColor(color, Math.sin((Math.PI * local) / (2 * fade))));
+      } else {
+        frame.set(light.light_id, { ...BLACK });
+      }
+    }
+    return frame;
+  }
+
+  // Color Fade - the whole roof crossfades through the palette
+  private generateFade(effect: MotionEffect, frameNum: number): Map<number, RGBW> {
+    const frame = new Map<number, RGBW>();
+    const palette = effect.colors.length > 0 ? effect.colors : [{ r: 255, g: 0, b: 0, w: 0 }, { r: 0, g: 0, b: 0, w: 255 }];
+    const hold = Math.round(num(effect.params?.holdTime, 3, 0, 600) * FPS);
+    const fade = Math.max(1, Math.round(num(effect.params?.fadeTime, 2, 0.1, 600) * FPS));
+    const step = hold + fade;
+    const n = Math.floor(frameNum / step);
+    const local = frameNum - n * step;
+    const from = palette[n % palette.length];
+    const to = palette[(n + 1) % palette.length];
+    const color = local < hold ? from : mixColor(from, to, (local - hold) / fade);
+    for (const light of this.lights) frame.set(light.light_id, { ...color });
+    return frame;
+  }
+
+  // Lightning - random strikes of a few quick flickers over a base color
+  private generateLightning(effect: MotionEffect, frameNum: number): Map<number, RGBW> {
+    const frame = new Map<number, RGBW>();
+    const flash: RGBW = effect.colors[0] || { r: 0, g: 0, b: 0, w: 255 };
+    const base: RGBW = effect.colors[1] || BLACK;
+    const perMinute = num(effect.params?.frequency, 12, 1, 120);
+    const coverage = num(effect.params?.coverage, 0.5, 0.1, 1);
+    const slot = Math.max(10, Math.round((60 / perMinute) * FPS));
+    const n = Math.floor(frameNum / slot);
+
+    for (const light of this.lights) frame.set(light.light_id, { ...base });
+
+    // Check this slot and the previous one so strikes near a boundary finish cleanly
+    for (const k of [n - 1, n]) {
+      const start = k * slot + Math.floor(rand(k, 1) * slot * 0.6);
+      const t = frameNum - start;
+      const flickers = 2 + Math.floor(rand(k, 2) * 3);
+      if (t < 0 || t >= flickers * 5) continue;
+      const f = Math.floor(t / 5);
+      // Each flicker: bright flash that decays; later flickers are dimmer
+      const level = (1 - (t % 5) / 5) * (0.5 + 0.5 * rand(k, 3, f)) * (f === 0 ? 1 : 0.8);
+      const center = rand(k, 4);
+      for (let y = 0; y < 3; y++) {
+        for (const row of this.getSegments(y, effect.scope)) {
+          const len = row.length;
+          const width = Math.max(1, Math.round(len * coverage));
+          const startX = Math.round(center * (len - width));
+          for (let j = startX; j < startX + width && j < len; j++) {
+            frame.set(row[j].light_id, maxColor(frame.get(row[j].light_id) || base, mixColor(base, flash, level)));
+          }
+        }
+      }
+    }
+    return frame;
+  }
+
+  // Fireworks - bursts that expand from a random point and fade out
+  private generateFireworks(effect: MotionEffect, frameNum: number): Map<number, RGBW> {
+    const frame = new Map<number, RGBW>();
+    const palette = effect.colors.length > 0 ? effect.colors : [{ r: 255, g: 0, b: 0, w: 0 }, { r: 0, g: 0, b: 0, w: 255 }];
+    const interval = Math.max(6, Math.round(num(effect.params?.interval, 1.5, 0.2, 30) * FPS));
+    const life = Math.max(6, Math.round(num(effect.params?.burstTime, 1.5, 0.2, 10) * FPS));
+    const maxRadius = num(effect.params?.burstSize, 6, 1, 40);
+
+    for (const light of this.lights) frame.set(light.light_id, { ...BLACK });
+
+    const n = Math.floor(frameNum / interval);
+    const overlap = Math.ceil(life / interval);
+    for (let y = 0; y < 3; y++) {
+      for (const row of this.getSegments(y, effect.scope)) {
+        const len = row.length;
+        for (let k = n - overlap; k <= n; k++) {
+          const t = frameNum - (k * interval + Math.floor(rand(k, 1) * interval * 0.5));
+          if (t < 0 || t >= life) continue;
+          const x0 = rand(k, 2) * (len - 1);
+          const y0 = rand(k, 3) * 2;
+          const color = palette[Math.floor(rand(k, 4) * palette.length)];
+          const p = t / life;
+          const radius = maxRadius * Math.sqrt(p);
+          const fadeOut = 1 - p;
+          for (let j = 0; j < len; j++) {
+            const d = Math.hypot(j - x0, (y - y0) * 1.5);
+            // Bright ring at the burst edge, with a brief glow inside it just after the burst
+            const ring = Math.max(0, 1 - Math.abs(d - radius));
+            const glow = p < 0.25 && d < radius ? 0.3 * (1 - p / 0.25) : 0;
+            const k2 = Math.max(ring, glow) * fadeOut;
+            if (k2 > 0) frame.set(row[j].light_id, maxColor(frame.get(row[j].light_id)!, scaleColor(color, k2)));
+          }
+        }
+      }
+    }
+    return frame;
+  }
+
+  // Fire - flickering heat, hotter at the bottom row; red -> orange -> yellow -> white
+  private generateFire(effect: MotionEffect, frameNum: number): Map<number, RGBW> {
+    const frame = new Map<number, RGBW>();
+    const intensity = num(effect.params?.intensity, 0.7, 0.1, 1);
+    const flicker = Math.max(1, Math.round(4 / Math.max(0.25, num(effect.params?.flicker, 1, 0.25, 4))));
+    const step = Math.floor(frameNum / flicker);
+    const frac = (frameNum % flicker) / flicker;
+    for (const light of this.lights) {
+      // Smoothly interpolated noise per light
+      const a = rand(light.light_id, step), b = rand(light.light_id, step + 1);
+      const noise = a + (b - a) * frac;
+      const rowHeat = [1, 0.75, 0.5][light.matrix_y] ?? 0.5;
+      const heat = Math.max(0, Math.min(1, rowHeat * intensity * (0.55 + 0.6 * noise)));
+      let c: RGBW;
+      if (heat < 0.4) c = { r: Math.round(255 * (heat / 0.4)), g: 0, b: 0, w: 0 };
+      else if (heat < 0.8) c = { r: 255, g: Math.round(160 * ((heat - 0.4) / 0.4)), b: 0, w: 0 };
+      else c = { r: 255, g: 160 + Math.round(60 * ((heat - 0.8) / 0.2)), b: 0, w: Math.round(80 * ((heat - 0.8) / 0.2)) };
+      frame.set(light.light_id, c);
+    }
+    return frame;
+  }
+
+  // Strobe - fast on/off flashing
+  private generateStrobe(effect: MotionEffect, frameNum: number): Map<number, RGBW> {
+    const frame = new Map<number, RGBW>();
+    const palette = effect.colors.length > 0 ? effect.colors : [{ r: 0, g: 0, b: 0, w: 255 }];
+    const rate = num(effect.params?.rate, 4, 0.5, 15);
+    const duty = num(effect.params?.duty, 0.3, 0.05, 0.95);
+    const period = Math.max(2, Math.round(FPS / rate));
+    const n = Math.floor(frameNum / period);
+    const on = frameNum - n * period < Math.max(1, Math.round(period * duty));
+    // Cycle through the palette, one color per flash
+    const color = palette[n % palette.length];
+    for (const light of this.lights) frame.set(light.light_id, on ? { ...color } : { ...BLACK });
+    return frame;
+  }
+
+  // Ripple - rings spreading outward from a point along each row
+  private generateRipple(effect: MotionEffect, frameNum: number): Map<number, RGBW> {
+    const frame = new Map<number, RGBW>();
+    const ringColor: RGBW = effect.colors[0] || { r: 0, g: 0, b: 0, w: 255 };
+    const base: RGBW = effect.colors[1] || BLACK;
+    const origin = num(effect.params?.origin, 50, 0, 100) / 100;
+    const spacing = num(effect.params?.spacing, 8, 2, 64);
+    const width = num(effect.params?.width, 1.5, 0.5, 10);
+    const travel = frameNum / 6; // lights per step outward
+    for (let y = 0; y < 3; y++) {
+      for (const row of this.getSegments(y, effect.scope)) {
+        const x0 = origin * (row.length - 1);
+        for (let j = 0; j < row.length; j++) {
+          const d = Math.hypot(j - x0, (y - 1) * 0.8);
+          // Distance from the nearest ring (rings sit every `spacing` lights, moving outward)
+          const phase = (((d - travel) % spacing) + spacing) % spacing;
+          const dist = Math.min(phase, spacing - phase);
+          const k = Math.max(0, 1 - dist / width);
+          frame.set(row[j].light_id, mixColor(base, ringColor, k));
+        }
+      }
+    }
     return frame;
   }
 
