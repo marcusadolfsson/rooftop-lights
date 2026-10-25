@@ -357,6 +357,22 @@ router.get('/effects/types', (req: Request, res: Response) => {
       },
     },
     {
+      type: 'expand',
+      name: 'Expand',
+      description: 'Fills outward from the middle until the wall or strip is full, then starts again',
+      defaultColors: [
+        { r: 0, g: 0, b: 0, w: 255 },
+        { r: 0, g: 0, b: 0, w: 0 },
+      ],
+      params: {
+        smooth: { type: 'boolean', default: false, label: 'Sub-pixel blending' },
+        origin: { type: 'number', default: 50, min: 0, max: 100, step: 5, label: 'Start point', unit: '%' },
+        hold: { type: 'number', default: 1, min: 0, max: 30, step: 0.5, label: 'Hold when full', unit: ' s' },
+        shrink: { type: 'boolean', default: false, label: 'Shrink back after filling' },
+        pause: { type: 'number', default: 0, min: 0, max: 30, step: 0.5, label: 'Pause before looping', unit: ' s' },
+      },
+    },
+    {
       type: 'breathe',
       name: 'Breathe',
       description: 'All lights pulsing together like breathing',
@@ -462,6 +478,7 @@ router.get('/effects/types', (req: Request, res: Response) => {
     comet: { colorLabels: ['Head', 'Tail'], colorHint: 'The tail fades from the head color toward the tail color' },
     sparkle: { colorLabels: ['Sparkle'] },
     wave: { colorLabels: ['Trough', 'Crest'], colorHint: 'The wave blends from the trough color to the crest color; Depth dims the troughs' },
+    expand: { colorLabels: ['Fill', 'Background'] },
     converge: { colorLabels: ['Left', 'Right', 'Meet'], colorHint: 'Meet is shown while the two groups are together in the middle' },
     breathe: { colorLabels: ['Glow'] },
     text: { colorLabels: ['Text'] },

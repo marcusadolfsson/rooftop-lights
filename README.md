@@ -29,6 +29,7 @@ A web app for designing, previewing and scheduling shows on architectural RGBW l
 | Sparkle | Random lights twinkling over a base color |
 | Rainbow | Smooth rainbow cycling across the display |
 | Wave | Smooth waves rolling along the walls from a trough color to a crest color |
+| Expand | Fills outward from the middle (or any start point) until full, then clears or shrinks back |
 | Meet in the Middle | Two groups start at opposite ends and meet in the middle, with an optional comet tail |
 | Breathe | All lights pulsing together |
 | Text | Scrolling text |

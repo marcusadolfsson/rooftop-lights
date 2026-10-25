@@ -215,6 +215,7 @@ export const STEP_FRAMES: Record<string, number> = {
   checkerboard: 15,
   comet: 4,
   converge: 4,
+  expand: 4,
   text: 6,
 };
 
@@ -441,6 +442,8 @@ export class EffectEngine {
         return this.generateComet(chaseAsComet(effect), frameNum);
       case 'converge':
         return this.generateConverge(effect, frameNum);
+      case 'expand':
+        return this.generateExpand(effect, frameNum);
       case 'twinkle':
         return this.generateTwinkle(effect, realFrame);
       case 'fade':
@@ -707,6 +710,42 @@ export class EffectEngine {
       }
     }
 
+    return frame;
+  }
+
+  // Expand - fills outward from a point (the middle by default) until the segment is full,
+  // holds, then clears (or shrinks back) and starts again
+  private generateExpand(effect: MotionEffect, frameNum: number): Map<number, RGBW> {
+    const frame = new Map<number, RGBW>();
+    const fill: RGBW = effect.colors[0] || { r: 0, g: 0, b: 0, w: 255 };
+    const background: RGBW = effect.colors[1] || BLACK;
+    const origin = num(effect.params?.origin, 50, 0, 100) / 100;
+    const shrink = bool(effect.params?.shrink, false);
+    const hold = Math.round((num(effect.params?.hold, 1, 0, 600) * FPS * effect.speed) / 4);
+    const step = Math.floor(frameNum / 4);
+    const pause = pauseSteps(effect, 4);
+
+    for (let y = 0; y < this.rows; y++) {
+      for (const row of this.getSegments(y, effect.scope)) {
+        const len = row.length;
+        const center = origin * (len - 1);
+        // Steps until the fill reaches the farther end
+        const reach = Math.ceil(Math.max(center, len - 1 - center)) + 1;
+        const cycle = reach + hold + (shrink ? reach : 0);
+        const local = cycleStep(step, cycle, pause);
+        // Radius of the filled area (in lights from the center); -1 = nothing lit
+        let radius: number;
+        if (local === null) radius = -1;
+        else if (local < reach) radius = local;
+        else if (local < reach + hold) radius = reach - 1;
+        else radius = reach - 1 - (local - reach - hold) - 1;
+        for (let j = 0; j < len; j++) {
+          // Half a light of slack so an even-length row starts with its two middle lights
+          const lit = radius >= 0 && Math.abs(j - center) <= radius + 0.5;
+          frame.set(row[j].light_id, lit ? { ...fill } : { ...background });
+        }
+      }
+    }
     return frame;
   }
 

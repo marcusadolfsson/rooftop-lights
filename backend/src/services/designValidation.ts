@@ -6,7 +6,7 @@ import { compileAICode } from './aiSandbox.js';
 
 export const MOTION_EFFECT_TYPES = [
   'ai', 'candy_cane', 'checkerboard', 'comet', 'sparkle',
-  'rainbow', 'wave', 'chase', 'converge', 'breathe', 'text',
+  'rainbow', 'wave', 'chase', 'converge', 'expand', 'breathe', 'text',
   'twinkle', 'fade', 'lightning', 'fireworks', 'fire', 'strobe', 'ripple',
 ] as const;
 
@@ -22,6 +22,7 @@ const BOOLEAN_PARAMS: Record<string, string[]> = {
   rainbow: ['adjustDefective'],
   wave: ['bounce'],
   converge: ['bounce', 'smooth'],
+  expand: ['shrink', 'smooth'],
   candy_cane: ['smooth'],
   checkerboard: ['smooth'],
   text: ['smooth'],
