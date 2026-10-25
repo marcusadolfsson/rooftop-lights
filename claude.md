@@ -116,7 +116,7 @@ designs (id, name, type, data, created_at, updated_at)
 
 -- Playlists of designs
 playlists (id, name, play_mode, created_at, updated_at)
-playlist_items (id, playlist_id, design_id, duration, position)
+playlist_items (id, playlist_id, design_id | child_playlist_id, duration, position, transition, repeat_mode 'seconds'|'times', repeat_count)
 
 -- Schedule entries
 schedules (id, design_id, playlist_id, design_type, is_default, start_date, end_date, priority)

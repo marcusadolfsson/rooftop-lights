@@ -44,7 +44,7 @@ A web app for designing, previewing and scheduling shows on architectural RGBW l
 
 ![Motion effect editor](docs/screenshots/design-motion.png)
 
-**Playlists.** Chain designs with a duration each, played in sequence or at random.
+**Playlists.** Chain designs and other playlists, played in sequence or at random. Each item plays for a number of seconds or a number of times: a motion effect that many complete cycles (static designs and random effects like Sparkle or Fire only take seconds), a nested playlist that many times through. The editor shows each item's length and the playlist total.
 
 **AI designer.** Describe a show in plain language ("a warm sunset from orange in the west to purple in the east") and Claude creates a new design, modifies an existing one, or writes a custom animation. It knows the layout, the available effects and your saved designs. This feature is optional and only appears when `ANTHROPIC_API_KEY` is set.
 

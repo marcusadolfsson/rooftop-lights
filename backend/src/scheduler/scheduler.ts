@@ -5,6 +5,10 @@ import { getArtNetController, ArtNetController } from '../artnet/artnet.js';
 import { getEffectEngine, normalizeMotionEffect, MotionEffect, RGBW, Light } from '../services/effectEngine.js';
 import { findActiveSchedule, ScheduleRow } from './activeSchedule.js';
 import { logRateLimited } from '../utils/rateLimitedLog.js';
+import {
+  buildPlaylistTimeline, locate, nodeFrames, shuffleNode,
+  PlaylistTimeline, TimelineItemRow, TimelineNode, TimelineSource,
+} from '../services/playlistTimeline.js';
 
 function maskDefectiveChannels(light: Light, color: RGBW): RGBW {
   if (!light.defective_channels) return color;
@@ -31,11 +35,13 @@ interface PlaylistRow {
   play_mode: 'sequence' | 'random';
 }
 
-interface PlaylistItemRow {
-  id: string;
-  design_id: string;
-  duration: number;
-  position: number;
+
+export interface PlaylistPosition {
+  itemIndex: number;
+  itemFrame: number;
+  itemFrames: number;
+  designId: string;
+  designFrame: number;
 }
 
 export interface PreviewDesign {
@@ -53,40 +59,42 @@ const DEFAULT_FLASH_MS = 500;
 
 const BLANK: Map<number, RGBW> = new Map();
 
-/** Plays a playlist: tracks the current item, its start time and its own frame counter. */
+/**
+ * Plays a playlist timeline: steps through the top-level items (in order, or picking at random),
+ * counting real frames into the current one. A nested playlist item plays its whole sequence
+ * through before the next top-level item; each design restarts its effect at frame 0, so
+ * "X times" lines up with complete cycles.
+ */
 class PlaylistPlayer {
-  private key = '';
+  private signature = '';
   private index = 0;
-  private itemStart = 0;
-  private itemFrame = 0;
+  private current: TimelineNode | null = null;
+  private frame = 0;
+  private last: { designId: string; frame: number } | null = null;
 
   reset(): void {
-    this.key = '';
+    this.signature = '';
+    this.last = null;
   }
 
-  /** Returns the item to show and the frame number within that item. */
-  step(playlistId: string, playMode: string, items: PlaylistItemRow[], now: number): { item: PlaylistItemRow; frame: number } | null {
+  /** Returns the design to show and the frame number within it. */
+  step(playlistId: string, timeline: PlaylistTimeline): { designId: string; frame: number } | null {
+    const items = timeline.items;
     if (items.length === 0) {
-      this.key = '';
+      this.reset();
       return null;
     }
 
-    // Any change to the playlist identity or its items restarts playback
-    const key = `${playlistId}|${playMode}|${items.map(i => `${i.id}:${i.design_id}:${i.duration}`).join(',')}`;
-    if (key !== this.key) {
-      this.key = key;
-      this.index = playMode === 'random' ? Math.floor(Math.random() * items.length) : 0;
-      this.startItem(items, now);
+    // Any change to the playlist identity or anything it plays restarts playback
+    const signature = `${playlistId}|${timeline.signature}`;
+    if (signature !== this.signature) {
+      this.signature = signature;
+      this.index = timeline.playMode === 'random' ? Math.floor(Math.random() * items.length) : 0;
+      this.startItem(items);
     }
 
-    if (this.index >= items.length) {
-      this.index = 0;
-      this.startItem(items, now);
-    }
-
-    const durationMs = Math.max(1, Number(items[this.index].duration) || 1) * 1000;
-    if (now - this.itemStart >= durationMs) {
-      if (playMode === 'random') {
+    if (!this.current || this.frame >= nodeFrames(this.current)) {
+      if (timeline.playMode === 'random') {
         if (items.length > 1) {
           // Pick a different item than the one that just finished
           const next = Math.floor(Math.random() * (items.length - 1));
@@ -95,17 +103,30 @@ class PlaylistPlayer {
       } else {
         this.index = (this.index + 1) % items.length;
       }
-      this.startItem(items, now);
+      this.startItem(items);
     }
 
-    const item = items[this.index];
-    const frame = this.itemFrame++;
-    return { item, frame };
+    const at = this.current ? locate(this.current, this.frame++) : null;
+    this.last = at ? { designId: at.leaf.designId, frame: at.frame } : null;
+    return this.last;
   }
 
-  private startItem(items: PlaylistItemRow[], now: number): void {
-    this.itemStart = now;
-    this.itemFrame = 0;
+  /** Where playback is: top-level item index, frames into it, and the design showing. */
+  position(): PlaylistPosition | null {
+    if (!this.signature || !this.current || !this.last) return null;
+    return {
+      itemIndex: this.index,
+      itemFrame: this.frame,
+      itemFrames: nodeFrames(this.current),
+      designId: this.last.designId,
+      designFrame: this.last.frame,
+    };
+  }
+
+  private startItem(items: TimelineNode[]): void {
+    // A random child playlist gets a fresh order each time its item starts
+    this.current = shuffleNode(items[this.index % items.length]);
+    this.frame = 0;
   }
 }
 
@@ -140,7 +161,8 @@ export class Scheduler {
 
   // Caches
   private cachedSchedule: { at: number; schedule: ScheduleRow | null } | null = null;
-  private playlistCache: Map<string, { at: number; playlist: PlaylistRow | undefined; items: PlaylistItemRow[] }> = new Map();
+  private playlistCache: Map<string, { at: number; playlist: PlaylistRow | undefined; items: TimelineItemRow[] }> = new Map();
+  private timelineCache: Map<string, { at: number; timeline: PlaylistTimeline | null }> = new Map();
   private designCache: Map<string, { updatedAt: string | null; type: string; data: unknown }> = new Map();
   private stmtDb: Database.Database | null = null;
   private stmts: {
@@ -177,6 +199,7 @@ export class Scheduler {
   invalidate(): void {
     this.cachedSchedule = null;
     this.playlistCache.clear();
+    this.timelineCache.clear();
     this.designCache.clear();
   }
 
@@ -244,14 +267,16 @@ export class Scheduler {
     return this.previewDesign !== null;
   }
 
-  getLivePreviewInfo(): { type: string; effectType?: string } | null {
+  getLivePreviewInfo(): { type: string; effectType?: string; playlist?: PlaylistPosition | null } | null {
     if (!this.isLivePreview || !this.livePreviewDesign) return null;
-    const info: { type: string; effectType?: string } = {
+    const info: { type: string; effectType?: string; playlist?: PlaylistPosition | null } = {
       type: this.livePreviewDesign.type,
     };
     if (this.livePreviewDesign.type === 'motion') {
       const data = this.livePreviewDesign.data as { type?: string } | null;
       info.effectType = data?.type;
+    } else if (this.livePreviewDesign.type === 'playlist') {
+      info.playlist = this.artnetSource.playlist.position();
     }
     return info;
   }
@@ -263,7 +288,10 @@ export class Scheduler {
       this.stmts = {
         design: db.prepare('SELECT id, type, data, updated_at FROM designs WHERE id = ?'),
         playlist: db.prepare('SELECT id, play_mode FROM playlists WHERE id = ?'),
-        items: db.prepare('SELECT id, design_id, duration, position FROM playlist_items WHERE playlist_id = ? ORDER BY position'),
+        items: db.prepare(`
+          SELECT id, design_id, child_playlist_id, duration, repeat_mode, repeat_count
+          FROM playlist_items WHERE playlist_id = ? ORDER BY position
+        `),
       };
     }
     return this.stmts;
@@ -387,18 +415,42 @@ export class Scheduler {
     return data === null ? null : entry;
   }
 
-  private loadPlaylist(playlistId: string): { playlist: PlaylistRow | undefined; items: PlaylistItemRow[] } {
+  private loadPlaylist(playlistId: string): { playlist: PlaylistRow | undefined; items: TimelineItemRow[] } {
     const now = Date.now();
     const cached = this.playlistCache.get(playlistId);
     if (cached && now - cached.at < SCHEDULE_TTL_MS) return cached;
 
     const s = this.statements();
     const playlist = s.playlist.get(playlistId) as PlaylistRow | undefined;
-    const items = playlist ? (s.items.all(playlistId) as PlaylistItemRow[]) : [];
+    const items = playlist ? (s.items.all(playlistId) as TimelineItemRow[]) : [];
     const entry = { at: now, playlist, items };
     this.playlistCache.set(playlistId, entry);
     if (this.playlistCache.size > 50) this.playlistCache.delete(this.playlistCache.keys().next().value as string);
     return entry;
+  }
+
+  /** Playlist with nested playlists expanded, rebuilt at most every SCHEDULE_TTL_MS (or on invalidate). */
+  private loadTimeline(playlistId: string): PlaylistTimeline | null {
+    const now = Date.now();
+    const cached = this.timelineCache.get(playlistId);
+    if (cached && now - cached.at < SCHEDULE_TTL_MS) return cached.timeline;
+
+    const engine = getEffectEngine();
+    const src: TimelineSource = {
+      playlist: (id) => {
+        const { playlist, items } = this.loadPlaylist(id);
+        return playlist ? { play_mode: playlist.play_mode, items } : undefined;
+      },
+      designCycle: (designId) => {
+        const design = this.loadDesign(designId);
+        if (!design) return undefined;
+        return design.type === 'motion' ? engine.cycleFrames(design.data) : null;
+      },
+    };
+    const timeline = buildPlaylistTimeline(playlistId, src);
+    this.timelineCache.set(playlistId, { at: now, timeline });
+    if (this.timelineCache.size > 50) this.timelineCache.delete(this.timelineCache.keys().next().value as string);
+    return timeline;
   }
 
   private renderSchedule(schedule: ScheduleRow): Map<number, RGBW> {
@@ -415,13 +467,13 @@ export class Scheduler {
   }
 
   private renderPlaylist(playlistId: string, source: RenderSource): Map<number, RGBW> {
-    const { playlist, items } = this.loadPlaylist(playlistId);
-    if (!playlist) return BLANK;
+    const timeline = this.loadTimeline(playlistId);
+    if (!timeline) return BLANK;
 
-    const current = source.playlist.step(playlistId, playlist.play_mode, items, Date.now());
+    const current = source.playlist.step(playlistId, timeline);
     if (!current) return BLANK;
 
-    const design = this.loadDesign(current.item.design_id);
+    const design = this.loadDesign(current.designId);
     if (!design || design.type === 'playlist') return BLANK;
 
     return this.renderDesignAt(design.type, design.data, current.frame);

@@ -41,6 +41,9 @@ export interface Design {
   // null when the stored row is corrupt (the backend then sets dataError)
   data: StaticDesignData | MotionDesignData | null;
   dataError?: string;
+  // Motion designs: seconds per complete effect cycle ("play X times" counts these); null when
+  // the effect has no natural cycle (random effects, AI code)
+  cycleSeconds?: number | null;
   created_at?: string;
   updated_at?: string;
 }
@@ -91,19 +94,43 @@ export interface Playlist {
   name: string;
   play_mode: 'sequence' | 'random';
   items: PlaylistItem[];
+  // One pass in order (sequence) or one round of every item (random)
+  totalSeconds?: number;
   created_at?: string;
   updated_at?: string;
 }
 
+export type RepeatMode = 'seconds' | 'times';
+
+/** A playlist item plays a design or another playlist (exactly one of the two ids is set). */
 export interface PlaylistItem {
   id: string;
   playlist_id: string;
-  design_id: string;
-  design_name?: string;
-  design_type?: string;
+  design_id: string | null;
+  child_playlist_id: string | null;
+  design_name?: string | null;
+  design_type?: string | null;
+  child_playlist_name?: string | null;
+  is_playlist?: boolean;
+  // Seconds mode plays for `duration`; times mode plays the design's cycle / the child playlist
+  // `repeat_count` times (duration is then only the fallback)
   duration: number;
+  repeat_mode: RepeatMode;
+  repeat_count: number;
+  // How long the item lasts, as the server computes it
+  seconds?: number;
   position: number;
   transition: 'cut' | 'fade' | 'fade_black';
+}
+
+/** What the API accepts for a playlist item. Older clients send only design_id + duration. */
+export interface PlaylistItemInput {
+  design_id?: string | null;
+  child_playlist_id?: string | null;
+  duration: number;
+  transition?: string;
+  repeat_mode?: RepeatMode;
+  repeat_count?: number;
 }
 
 export interface Schedule {

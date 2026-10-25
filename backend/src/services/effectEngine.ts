@@ -291,6 +291,144 @@ const PIXEL_FONT: Record<string, number[][]> = {
   '#': [[1,0,1],[1,1,1],[1,0,1]],
 };
 
+/** Scroll text exactly as generateText reads it from params. */
+function scrollText(effect: MotionEffect): string {
+  return (typeof effect.params?.text === 'string' && effect.params.text ? effect.params.text : 'HELLO')
+    .slice(0, MAX_TEXT_LENGTH).toUpperCase();
+}
+
+/** Width in pixels of renderTextBitmap's output: glyph widths plus a 1-pixel gap between characters. */
+function textBitmapWidth(text: string): number {
+  let width = 0;
+  for (let i = 0; i < text.length; i++) {
+    width += (i > 0 ? 1 : 0) + (PIXEL_FONT[text[i]] || PIXEL_FONT[' '])[0].length;
+  }
+  return width;
+}
+
+/** Effects timed in real frames (they ignore Speed); everything else gets a speed-scaled frame. */
+const REAL_TIME_EFFECTS = new Set(['twinkle', 'fade', 'lightning', 'fireworks', 'strobe']);
+
+/** What the cycle length depends on in the layout: the segment lengths for the scope and the row count. */
+export interface CycleLayout {
+  segmentLengths: number[];
+  rows: number;
+}
+
+/**
+ * Length of one complete cycle of a motion effect, in real frames at 30 FPS: after this many frames
+ * the effect shows its first frame again. Used for "play X times" in playlists. Segments of
+ * different lengths loop at different rates, so the longest segment for the scope sets the cycle.
+ * Returns null for effects with no natural cycle (random ones, AI code) or an empty layout.
+ */
+export function effectCycleFrames(rawEffect: unknown, layout: CycleLayout): number | null {
+  let effect = normalizeMotionEffect(rawEffect);
+  if (effect.type === 'chase') effect = chaseAsComet(effect);
+  const p = effect.params ?? {};
+  const len = Math.max(0, ...layout.segmentLengths);
+  const rows = Math.max(1, layout.rows);
+
+  // Cycle in the frame units the effect is driven by (speed-scaled, or real for real-time effects)
+  let frames: number | null;
+  switch (effect.type) {
+    case 'comet': {
+      if (len === 0) return null;
+      const tailLength = Math.round(num(p.tailLength, 8, 0, 200));
+      const bounce = bool(p.bounce, true);
+      const tailExit = bool(p.tailExit, true);
+      const size = Math.round(num(p.size, 1, 1, 100));
+      const pause = pauseSteps(effect, 4);
+      const range = axisRange(len, rows, angleVector(effect));
+      const totalWidth = Math.round(range.max - range.min) + 1;
+      // Same pass arithmetic as generateComet
+      const span = totalWidth + (tailExit ? tailLength + size - 1 : 0);
+      const fwdStart = tailExit || pause > 0 ? 0 : Math.min(size - 1, totalWidth - 1);
+      const out = tailExit ? span - 1 : totalWidth - fwdStart;
+      const backStart = tailExit ? totalWidth - 1 : totalWidth - 1 - size;
+      const backEnd = tailExit ? totalWidth - span + 1 : pause > 0 ? 0 : 1;
+      const back = Math.max(0, backStart - backEnd + 1);
+      frames = 4 * ((bounce ? Math.max(1, out + back) : span) + pause);
+      break;
+    }
+    case 'converge': {
+      if (len === 0) return null;
+      const bounce = bool(p.bounce, false);
+      const hold = Math.round(num(p.hold, 0, 0, 600) * FPS * effect.speed / 4);
+      const pause = pauseSteps(effect, 4);
+      const travel = Math.max(2, Math.ceil(len / 2));
+      const outward = bounce ? Math.max(0, pause > 0 ? travel - 1 : travel - 2) : 0;
+      frames = 4 * (travel + hold + outward + pause);
+      break;
+    }
+    case 'expand': {
+      if (len === 0) return null;
+      const center = (num(p.origin, 50, 0, 100) / 100) * (len - 1);
+      const shrink = bool(p.shrink, false);
+      const hold = Math.round((num(p.hold, 1, 0, 600) * FPS * effect.speed) / 4);
+      const pause = pauseSteps(effect, 4);
+      const reach = Math.ceil(Math.max(center, len - 1 - center)) + 1;
+      frames = 4 * (reach + hold + (shrink ? reach : 0) + pause);
+      break;
+    }
+    case 'text': {
+      if (len === 0) return null;
+      const width = textBitmapWidth(scrollText(effect));
+      frames = width === 0 ? null : 6 * (width + len + pauseSteps(effect, 6));
+      break;
+    }
+    case 'candy_cane':
+      frames = 15 * (Math.round(num(p.width1, 4, 1, 100)) + Math.round(num(p.width2, 4, 1, 100)));
+      break;
+    case 'checkerboard':
+      frames = 2 * 15;
+      break;
+    case 'rainbow':
+      // Hue advances one degree per frame
+      frames = 360;
+      break;
+    case 'wave': {
+      const wavelength = num(p.wavelength, 8, 2, 1000);
+      if (bool(p.bounce, false)) {
+        if (len === 0) return null;
+        // The offset slides out and back over 2 * extent lights
+        const range = axisRange(len, rows, angleVector(effect));
+        frames = (2 * (range.max - range.min + 1)) / WAVE_LIGHTS_PER_FRAME;
+      } else {
+        frames = wavelength / WAVE_LIGHTS_PER_FRAME;
+      }
+      break;
+    }
+    case 'ripple':
+      // Rings move outward 1/6 light per frame and repeat every `spacing` lights
+      frames = num(p.spacing, 8, 2, 64) * 6;
+      break;
+    case 'breathe': {
+      const rate = num(p.speed, 0.05, 0.001, 10);
+      const pause = pauseSteps(effect, 1);
+      frames = pause > 0 ? Math.round((2 * Math.PI) / rate) + pause : (2 * Math.PI) / rate;
+      break;
+    }
+    case 'fade': {
+      const colors = effect.colors.length > 0 ? effect.colors.length : 2;
+      const hold = Math.round(num(p.holdTime, 3, 0, 600) * FPS);
+      const fade = Math.max(1, Math.round(num(p.fadeTime, 2, 0.1, 600) * FPS));
+      frames = colors * (hold + fade);
+      break;
+    }
+    case 'strobe': {
+      const colors = Math.max(1, effect.colors.length);
+      frames = colors * Math.max(2, Math.round(FPS / num(p.rate, 4, 0.5, 15)));
+      break;
+    }
+    default:
+      // sparkle, twinkle, lightning, fireworks, fire, ai: random or arbitrary, no cycle to count
+      frames = null;
+  }
+  if (frames === null || !Number.isFinite(frames) || frames <= 0) return null;
+  const real = REAL_TIME_EFFECTS.has(effect.type) ? frames : frames / effect.speed;
+  return Math.max(1, Math.round(real));
+}
+
 export class EffectEngine {
   private walls: Wall[] = [];
   private rows = 3; // tallest wall's height: how many rows the row-based effects iterate
@@ -374,6 +512,20 @@ export class EffectEngine {
     }
     const row = this.getContinuousRow(y);
     return row.length > 0 ? [row] : [];
+  }
+
+  /** effectCycleFrames against the current layout (only the chosen walls count for a limited Per Wall). */
+  cycleFrames(rawEffect: unknown): number | null {
+    const effect = normalizeMotionEffect(rawEffect);
+    const wallIds = effect.scope === 'wall' ? selectedWallIds(effect).filter(id => this.walls.some(w => w.id === id)) : [];
+    const keep = wallIds.length > 0 ? new Set(wallIds) : null;
+    const segmentLengths: number[] = [];
+    for (let y = 0; y < this.rows; y++) {
+      for (const row of this.getSegments(y, effect.scope)) {
+        if (!keep || keep.has(row[0].wall_id)) segmentLengths.push(row.length);
+      }
+    }
+    return effectCycleFrames(effect, { segmentLengths, rows: this.rows });
   }
 
   // Generate frame for static design
@@ -1061,8 +1213,7 @@ export class EffectEngine {
   private generateText(effect: MotionEffect, frameNum: number): Map<number, RGBW> {
     const frame = new Map<number, RGBW>();
     const textColor: RGBW = effect.colors[0] || { r: 0, g: 0, b: 0, w: 255 };
-    const text = (typeof effect.params?.text === 'string' && effect.params.text ? effect.params.text : 'HELLO')
-      .slice(0, MAX_TEXT_LENGTH).toUpperCase();
+    const text = scrollText(effect);
     const step = Math.floor(frameNum / 6);
     const pause = pauseSteps(effect, 6);
 

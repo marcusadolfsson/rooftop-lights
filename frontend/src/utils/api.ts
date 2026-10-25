@@ -4,6 +4,7 @@ import type {
   Light,
   Design,
   Playlist,
+  PlaylistItemInput,
   Schedule,
   ArtNetConfig,
   LayoutData,
@@ -137,13 +138,13 @@ export const playlistsAPI = {
 
   get: (id: string) => fetchJSON<Playlist>(`/playlists/${id}`),
 
-  create: (data: { name: string; play_mode?: string; items?: { design_id: string; duration: number }[] }) =>
+  create: (data: { name: string; play_mode?: string; items?: PlaylistItemInput[] }) =>
     fetchJSON<Playlist>('/playlists', {
       method: 'POST',
       body: JSON.stringify(data),
     }),
 
-  update: (id: string, data: { name: string; play_mode: string; items?: { design_id: string; duration: number; transition?: string }[] }) =>
+  update: (id: string, data: { name: string; play_mode: string; items?: PlaylistItemInput[] }) =>
     fetchJSON<{ success: boolean }>(`/playlists/${id}`, {
       method: 'PUT',
       body: JSON.stringify(data),
@@ -154,7 +155,7 @@ export const playlistsAPI = {
       method: 'DELETE',
     }),
 
-  addItem: (playlistId: string, data: { design_id: string; duration: number; transition?: string }) =>
+  addItem: (playlistId: string, data: PlaylistItemInput) =>
     fetchJSON(`/playlists/${playlistId}/items`, {
       method: 'POST',
       body: JSON.stringify(data),
@@ -270,7 +271,7 @@ export const aiAPI = {
 
 // Preview API
 export const previewAPI = {
-  getStatus: () => fetchJSON<{ isLivePreview: boolean; hasPreview: boolean; livePreviewInfo: { type: string; effectType?: string } | null }>('/preview/status'),
+  getStatus: () => fetchJSON<{ isLivePreview: boolean; hasPreview: boolean; livePreviewInfo: { type: string; effectType?: string; playlist?: { itemIndex: number; itemFrame: number; itemFrames: number; designId: string; designFrame: number } | null } | null }>('/preview/status'),
 
   start: (data: { designId?: string; designType?: string; designData?: unknown; live?: boolean }) =>
     fetchJSON<{ success: boolean }>('/preview/start', {

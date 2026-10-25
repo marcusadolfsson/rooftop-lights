@@ -4,7 +4,7 @@ import { randomUUID as uuidv4 } from 'crypto';
 import { generateDesignFromDescription } from '../services/aiDesigner.js';
 import { validateDesign, safeParseJSON } from '../services/designValidation.js';
 import { invalidateSchedule } from '../scheduler/scheduler.js';
-import { STEP_FRAMES } from '../services/effectEngine.js';
+import { STEP_FRAMES, getEffectEngine } from '../services/effectEngine.js';
 import { applyLayoutDefaults } from '../services/layoutDefaults.js';
 
 const router = Router();
@@ -18,13 +18,17 @@ function validateName(name: unknown): string | null {
 }
 
 // Parse a row's JSON data; a corrupt row is returned with data: null and
-// dataError set instead of failing the whole request.
+// dataError set instead of failing the whole request. Motion designs also get cycleSeconds:
+// how long one complete cycle of the effect takes (null when it has none), which is what a
+// playlist's "play X times" counts.
 function parseRow(d: any) {
   const data = safeParseJSON(d.data);
   if (data === null) {
     return { ...d, data: null, dataError: 'Stored design data is not valid JSON' };
   }
-  return { ...d, data };
+  if (d.type !== 'motion') return { ...d, data };
+  const frames = getEffectEngine().cycleFrames(data);
+  return { ...d, data, cycleSeconds: frames === null ? null : Math.round((frames / 30) * 100) / 100 };
 }
 
 // Get all designs

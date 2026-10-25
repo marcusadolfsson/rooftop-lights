@@ -30,6 +30,45 @@ function reportForeignKeyViolations(database: Database.Database): void {
   }
 }
 
+const PLAYLIST_ITEMS_COLUMNS = `
+      id TEXT PRIMARY KEY,
+      playlist_id TEXT NOT NULL,
+      design_id TEXT,
+      child_playlist_id TEXT,
+      duration INTEGER NOT NULL,
+      position INTEGER NOT NULL,
+      transition TEXT DEFAULT 'cut',
+      repeat_mode TEXT NOT NULL DEFAULT 'seconds' CHECK (repeat_mode IN ('seconds', 'times')),
+      repeat_count INTEGER NOT NULL DEFAULT 1 CHECK (repeat_count >= 1),
+      CHECK ((design_id IS NULL) <> (child_playlist_id IS NULL)),
+      FOREIGN KEY (playlist_id) REFERENCES playlists(id) ON DELETE CASCADE,
+      FOREIGN KEY (design_id) REFERENCES designs(id) ON DELETE CASCADE,
+      FOREIGN KEY (child_playlist_id) REFERENCES playlists(id) ON DELETE CASCADE
+    `;
+
+/**
+ * Rebuild playlist_items with the nested-playlist columns, keeping every row (ids, positions,
+ * durations, transitions). Foreign keys are switched off for the copy so dropping the old table
+ * can't cascade anywhere; the pragma is a no-op inside a transaction, so it is set around it.
+ */
+function migratePlaylistItemsToNested(database: Database.Database): void {
+  database.pragma('foreign_keys = OFF');
+  try {
+    database.transaction(() => {
+      database.exec(`CREATE TABLE playlist_items_new (${PLAYLIST_ITEMS_COLUMNS})`);
+      const copied = database.prepare(`
+        INSERT INTO playlist_items_new (id, playlist_id, design_id, duration, position, transition)
+        SELECT id, playlist_id, design_id, duration, position, COALESCE(transition, 'cut') FROM playlist_items
+      `).run().changes;
+      database.exec('DROP TABLE playlist_items');
+      database.exec('ALTER TABLE playlist_items_new RENAME TO playlist_items');
+      console.log(`Migrated playlist_items for nested playlists (${copied} item(s) kept)`);
+    })();
+  } finally {
+    database.pragma('foreign_keys = ON');
+  }
+}
+
 function initializeTables(): void {
   const database = db!;
 
@@ -121,24 +160,20 @@ function initializeTables(): void {
     )
   `);
 
-  // Playlist items
-  database.exec(`
-    CREATE TABLE IF NOT EXISTS playlist_items (
-      id TEXT PRIMARY KEY,
-      playlist_id TEXT NOT NULL,
-      design_id TEXT NOT NULL,
-      duration INTEGER NOT NULL,
-      position INTEGER NOT NULL,
-      transition TEXT DEFAULT 'cut',
-      FOREIGN KEY (playlist_id) REFERENCES playlists(id) ON DELETE CASCADE,
-      FOREIGN KEY (design_id) REFERENCES designs(id) ON DELETE CASCADE
-    )
-  `);
+  // Playlist items: each plays a design or another playlist (child_playlist_id), for `duration`
+  // seconds or `repeat_count` times through
+  database.exec(`CREATE TABLE IF NOT EXISTS playlist_items (${PLAYLIST_ITEMS_COLUMNS})`);
 
   // Migration: Add transition column to playlist_items if it doesn't exist
   const piColumns = database.prepare("PRAGMA table_info(playlist_items)").all() as { name: string }[];
   if (!piColumns.some(col => col.name === 'transition')) {
     database.exec("ALTER TABLE playlist_items ADD COLUMN transition TEXT DEFAULT 'cut'");
+  }
+
+  // Migration: nested playlists and repeat modes. design_id has to become nullable, which ALTER
+  // TABLE can't do, so the table is rebuilt once (when child_playlist_id is missing)
+  if (!piColumns.some(col => col.name === 'child_playlist_id')) {
+    migratePlaylistItemsToNested(database);
   }
 
   // Schedule table

@@ -766,6 +766,56 @@ body {
   font-size: 0.85rem;
 }
 
+/* Nested playlists are tagged so they stand out from designs */
+.playlist-tag {
+  display: inline-block;
+  padding: 0.05rem 0.4rem;
+  border-radius: 0.25rem;
+  background-color: rgba(59, 130, 246, 0.15);
+  color: rgb(96, 165, 250);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  vertical-align: middle;
+}
+
+/* [sec | times] toggle, its number and the resulting length */
+.playlist-item-timing {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.playlist-item-mode {
+  padding: 0.125rem;
+}
+
+.playlist-item-mode button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  background: none;
+  color: var(--text-secondary);
+}
+
+.playlist-item-length {
+  min-width: 5.5rem;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.playlist-total {
+  align-self: flex-end;
+  padding: 0.25rem 0.75rem 0;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+.playlist-total strong {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
 /* Schedule Calendar */
 .schedule-list {
   display: flex;
@@ -1762,6 +1812,21 @@ body {
   .playlist-item-move {
     display: inline-flex;
     gap: 0.125rem;
+  }
+
+  /* Timing gets its own line: [sec | times] [number] length */
+  .playlist-item-timing {
+    flex: 1 1 100%;
+  }
+
+  .playlist-item-length {
+    min-width: 0;
+    margin-left: auto;
+  }
+
+  .playlist-item-mode button {
+    min-height: 32px;
+    padding: 0.25rem 0.75rem;
   }
 
   .playlist-item .form-select {

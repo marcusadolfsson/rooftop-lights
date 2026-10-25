@@ -1,7 +1,7 @@
 import { useEffect, useState, type DragEvent } from 'react';
 import { designsAPI, playlistsAPI } from '../../utils/api';
 import type { PreviewControls } from '../../hooks/usePreview';
-import type { Design, EffectType, MotionDesignData, Playlist, RGBW, StaticDesignData, Wall } from '../../types';
+import type { Design, EffectType, MotionDesignData, Playlist, PlaylistItemInput, RepeatMode, RGBW, StaticDesignData, Wall } from '../../types';
 import type { ColorTool } from './ColorPicker';
 
 export interface EditorDeps {
@@ -378,15 +378,49 @@ export type MotionEditor = ReturnType<typeof useMotionEditor>;
 
 export interface EditingPlaylistItem {
   key: string; // stable client-side identity (for React keys during drag reorder)
-  design_id: string;
-  design_name?: string;
+  // Exactly one of these is set: the item plays a design or a nested playlist
+  design_id: string | null;
+  child_playlist_id: string | null;
+  name?: string;
   design_type?: string;
   duration: number;
+  repeat_mode: RepeatMode;
+  repeat_count: number;
   transition: string;
 }
 
 let nextItemKey = 0;
 const newItemKey = () => `item-${++nextItemKey}`;
+
+export const MAX_REPEAT_COUNT = 1000;
+
+/** "≈ 12.5 s", "≈ 2 min 5 s", "≈ 1 h 10 min" */
+export function formatSeconds(seconds: number): string {
+  if (!Number.isFinite(seconds)) return '';
+  if (seconds < 60) return `≈ ${Math.round(seconds * 10) / 10} s`;
+  if (seconds < 3600) {
+    const m = Math.floor(seconds / 60), sec = Math.round(seconds - m * 60);
+    return sec ? `≈ ${m} min ${sec} s` : `≈ ${m} min`;
+  }
+  const h = Math.floor(seconds / 3600), m = Math.round((seconds - h * 3600) / 60);
+  return m ? `≈ ${h} h ${m} min` : `≈ ${h} h`;
+}
+
+/** True when `childId` is `parentId` or contains it at any depth (so it can't be added to it). */
+function containsPlaylist(playlists: Playlist[], childId: string, parentId: string): boolean {
+  const seen = new Set<string>();
+  const todo = [childId];
+  while (todo.length > 0) {
+    const id = todo.pop()!;
+    if (id === parentId) return true;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    for (const item of playlists.find((p) => p.id === id)?.items ?? []) {
+      if (item.child_playlist_id) todo.push(item.child_playlist_id);
+    }
+  }
+  return false;
+}
 
 export function usePlaylistEditor({ reload, setError, designs, playlists }: Omit<EditorDeps, 'preview' | 'autoPreview'> & { designs: Design[]; playlists: Playlist[] }) {
   const [selectedPlaylist, setSelectedPlaylist] = useState<Playlist | null>(null);
@@ -407,9 +441,12 @@ export function usePlaylistEditor({ reload, setError, designs, playlists }: Omit
     setItems(playlist.items.map((i) => ({
       key: i.id || newItemKey(),
       design_id: i.design_id,
-      design_name: i.design_name,
-      design_type: i.design_type,
+      child_playlist_id: i.child_playlist_id ?? null,
+      name: (i.child_playlist_id ? i.child_playlist_name : i.design_name) ?? undefined,
+      design_type: i.design_type ?? undefined,
       duration: i.duration,
+      repeat_mode: i.repeat_mode === 'times' ? 'times' : 'seconds',
+      repeat_count: i.repeat_count || 1,
       transition: i.transition || 'cut',
     })));
     setMode(playlist.play_mode);
@@ -422,20 +459,72 @@ export function usePlaylistEditor({ reload, setError, designs, playlists }: Omit
     setItems((prev) => [...prev, {
       key: newItemKey(),
       design_id: designId,
-      design_name: design.name,
+      child_playlist_id: null,
+      name: design.name,
       design_type: design.type,
       duration: 10,
+      repeat_mode: 'seconds',
+      repeat_count: 1,
       transition: 'cut',
     }]);
   };
 
+  // Nested playlists default to playing through once
+  const addPlaylist = (playlistId: string) => {
+    const playlist = playlists.find((p) => p.id === playlistId);
+    if (!playlist || !canAddPlaylist(playlistId)) return;
+    setItems((prev) => [...prev, {
+      key: newItemKey(),
+      design_id: null,
+      child_playlist_id: playlistId,
+      name: playlist.name,
+      duration: 10,
+      repeat_mode: 'times',
+      repeat_count: 1,
+      transition: 'cut',
+    }]);
+  };
+
+  /** Saved playlists that can go into this one: not itself, and none that already contain it. */
+  const canAddPlaylist = (playlistId: string) =>
+    !selectedPlaylist || !containsPlaylist(playlists, playlistId, selectedPlaylist.id);
+  const addablePlaylists = playlists.filter((p) => canAddPlaylist(p.id));
+
+  /**
+   * Seconds one "time" of an item takes: a motion design's effect cycle, or a nested playlist's
+   * total. null when the item can only play for seconds (static designs, effects with no cycle).
+   */
+  const cycleSeconds = (item: EditingPlaylistItem): number | null => {
+    if (item.child_playlist_id) {
+      const total = playlists.find((p) => p.id === item.child_playlist_id)?.totalSeconds;
+      return total && total > 0 ? total : null;
+    }
+    const design = designs.find((d) => d.id === item.design_id);
+    return design?.type === 'motion' && design.cycleSeconds ? design.cycleSeconds : null;
+  };
+  // Times mode only counts when there's a cycle to count; otherwise the item plays its seconds
+  const effectiveMode = (item: EditingPlaylistItem): RepeatMode =>
+    item.repeat_mode === 'times' && cycleSeconds(item) !== null ? 'times' : 'seconds';
+  const itemSeconds = (item: EditingPlaylistItem): number => {
+    const cycle = cycleSeconds(item);
+    return effectiveMode(item) === 'times' && cycle !== null ? cycle * item.repeat_count : Math.max(1, item.duration);
+  };
+  const totalSeconds = items.reduce((sum, i) => sum + itemSeconds(i), 0);
+
   const removeItem = (key: string) => setItems((prev) => prev.filter((i) => i.key !== key));
 
-  const updateItem = (key: string, field: 'duration' | 'transition', value: number | string) => {
+  const updateItem = (key: string, field: 'duration' | 'transition' | 'repeat_mode' | 'repeat_count', value: number | string) => {
     setItems((prev) => prev.map((i) => (i.key === key ? { ...i, [field]: value } : i)));
   };
 
-  const payloadItems = () => items.map((i) => ({ design_id: i.design_id, duration: i.duration, transition: i.transition }));
+  const payloadItems = (): PlaylistItemInput[] => items.map((i) => ({
+    design_id: i.design_id,
+    child_playlist_id: i.child_playlist_id,
+    duration: i.duration,
+    repeat_mode: effectiveMode(i),
+    repeat_count: i.repeat_count,
+    transition: i.transition,
+  }));
 
   /** Saves; returns 'needs-name' for a new playlist without a name. */
   const save = async (nameOverride?: string): Promise<'saved' | 'needs-name' | 'failed'> => {
@@ -520,7 +609,8 @@ export function usePlaylistEditor({ reload, setError, designs, playlists }: Omit
 
   return {
     selectedPlaylist, name, setName, items, mode, setMode, dragKey,
-    startNew, load, addDesign, removeItem, updateItem, save, remove, rename, dragStart, dragOver, dragEnd, moveItem,
+    addablePlaylists, cycleSeconds, effectiveMode, itemSeconds, totalSeconds,
+    startNew, load, addDesign, addPlaylist, removeItem, updateItem, save, remove, rename, dragStart, dragOver, dragEnd, moveItem,
   };
 }
 
