@@ -68,6 +68,9 @@ export interface EffectType {
   // Per-swatch names (e.g. Head, Tail), or a hint when the colors are a palette
   colorLabels?: string[];
   colorHint?: string;
+  // Stepped effects move one light every stepFrames frames at 1x; realTime effects ignore Speed
+  stepFrames?: number;
+  realTime?: boolean;
 }
 
 export interface EffectParam {

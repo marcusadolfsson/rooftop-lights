@@ -1955,3 +1955,13 @@ body {
 .fx-range-input:focus-visible::-webkit-slider-thumb {
   box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.35);
 }
+
+.fx-speed-note {
+  margin: 0.35rem 0 0;
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+}
+
+.fx-speed-note-warn {
+  color: var(--warning-color);
+}

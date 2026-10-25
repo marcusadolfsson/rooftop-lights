@@ -465,7 +465,22 @@ router.get('/effects/types', (req: Request, res: Response) => {
     ripple: { colorLabels: ['Rings', 'Background'] },
   };
 
-  res.json(effectTypes.map(fx => ({ ...fx, ...colorInfo[fx.type] })));
+  // How Speed relates to motion. Stepped effects move one light every `stepFrames` frames at 1x
+  // (the render loop runs at 30 FPS); real-time effects set their timing in seconds and ignore Speed.
+  const motionInfo: Record<string, { stepFrames?: number; realTime?: boolean }> = {
+    candy_cane: { stepFrames: 15 },
+    checkerboard: { stepFrames: 15 },
+    comet: { stepFrames: 4 },
+    converge: { stepFrames: 4 },
+    text: { stepFrames: 6 },
+    twinkle: { realTime: true },
+    fade: { realTime: true },
+    lightning: { realTime: true },
+    fireworks: { realTime: true },
+    strobe: { realTime: true },
+  };
+
+  res.json(effectTypes.map(fx => ({ ...fx, ...colorInfo[fx.type], ...motionInfo[fx.type] })));
 });
 
 export default router;

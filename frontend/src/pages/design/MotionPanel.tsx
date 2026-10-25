@@ -166,13 +166,21 @@ export default function MotionPanel({
               {isMobile && hasColors && (
                 <ColorPicker color={currentColor} onChange={handleColorChange} hasRGBW={hasRGBW} />
               )}
-              <div className="form-group" style={{ marginBottom: 0, minWidth: '160px' }}>
-                <div className="fx-param-head">
-                  <label className="form-label" htmlFor="motion-speed" style={{ marginBottom: 0 }}>Speed</label>
-                  <span className="fx-value">{clamp(speed, SPEED_MIN, SPEED_MAX).toFixed(1)}×</span>
+              {effect.realTime ? (
+                <div className="form-group" style={{ marginBottom: 0, minWidth: '160px' }}>
+                  <span className="form-label">Speed</span>
+                  <p className="fx-speed-note">Timing is set in seconds below; Speed doesn't apply.</p>
                 </div>
-                <Slider id="motion-speed" min={SPEED_MIN} max={SPEED_MAX} step={0.1} value={speed} onChange={editor.setSpeed} />
-              </div>
+              ) : (
+                <div className="form-group" style={{ marginBottom: 0, minWidth: '160px' }}>
+                  <div className="fx-param-head">
+                    <label className="form-label" htmlFor="motion-speed" style={{ marginBottom: 0 }}>Speed</label>
+                    <span className="fx-value">{clamp(speed, SPEED_MIN, SPEED_MAX).toFixed(1)}×</span>
+                  </div>
+                  <Slider id="motion-speed" min={SPEED_MIN} max={SPEED_MAX} step={0.1} value={speed} onChange={editor.setSpeed} />
+                  <SpeedNote stepFrames={effect.stepFrames} speed={clamp(speed, SPEED_MIN, SPEED_MAX)} />
+                </div>
+              )}
               <div className="form-group" style={{ marginBottom: 0 }}>
                 <span className="form-label">Scope</span>
                 <div className="preview-mode-toggle" role="group" aria-label="Scope" style={{ width: 'fit-content' }}>
@@ -291,6 +299,23 @@ function Slider({ id, min, max, step, value, onChange }: { id: string; min: numb
       style={{ '--fill': `${Math.max(0, Math.min(100, pct))}%` } as CSSProperties}
       onChange={(e) => onChange(parseFloat(e.target.value))}
     />
+  );
+}
+
+// Lights can only jump a whole light at a time, so a stepped effect looks like a smooth glide only
+// when it steps often enough. Around 10 steps per second reads as motion rather than single jumps.
+const RENDER_FPS = 30;
+const SMOOTH_STEPS_PER_SECOND = 10;
+function SpeedNote({ stepFrames, speed }: { stepFrames?: number; speed: number }) {
+  if (!stepFrames) return <p className="fx-speed-note">Smooth at any speed</p>;
+  const stepsPerSecond = (RENDER_FPS * speed) / stepFrames;
+  const minSmooth = (SMOOTH_STEPS_PER_SECOND * stepFrames) / RENDER_FPS;
+  const smooth = speed >= minSmooth - 1e-9;
+  return (
+    <p className={`fx-speed-note${smooth ? '' : ' fx-speed-note-warn'}`}>
+      {formatNumber(Math.round(stepsPerSecond * 10) / 10)} lights/s · smooth from {formatNumber(Math.round(minSmooth * 10) / 10)}×
+      {minSmooth > SPEED_MAX && ' (above max)'}
+    </p>
   );
 }
 
