@@ -323,7 +323,7 @@ function SchedulerPage() {
       )}
 
       <div className="page-header">
-        <h1 className="page-title">Schedule</h1>
+        <h1 className="page-title">Live &amp; Schedule</h1>
         <button
           className="btn btn-primary"
           onClick={() => {

@@ -36,7 +36,7 @@ function App() {
               to="/schedule"
               className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}
             >
-              Schedule
+              Live &amp; Schedule
             </NavLink>
             <NavLink
               to="/layout"

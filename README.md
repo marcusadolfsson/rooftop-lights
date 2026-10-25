@@ -72,13 +72,13 @@ Every page has a live preview fed over WebSocket, in 2D (the walls unrolled into
 
 ![3D preview](docs/screenshots/design-3d.png)
 
-### Schedule
+### Live & Schedule
 
 - A **default** design, scene or playlist plays whenever nothing else is scheduled.
 - **Date schedules** override it between a start date and time and an end date and time, and a priority decides between overlapping schedules.
 - The ArtNet output strip at the top shows exactly what is being sent to the lights right now.
 
-![Schedule page](docs/screenshots/schedule.png)
+![Live & Schedule page](docs/screenshots/schedule.png)
 
 ### Light Layout
 
@@ -177,7 +177,7 @@ The tests copy that database again to a temp file, so the file you pass is never
 | `AUDIO_UDP_PORT` | UDP port for live audio levels (`0` disables) | `7000` |
 | `NODE_ENV` | `production` or `development` | `production` |
 
-Schedule times are evaluated in the container's `TZ`, and the Schedule page shows which zone that is. Local development without Docker needs Node 20.19+ or 22.12+; the images use Node 24.
+Schedule times are evaluated in the container's `TZ`, and the Live & Schedule page shows which zone that is. Local development without Docker needs Node 20.19+ or 22.12+; the images use Node 24.
 
 ### Health check
 
