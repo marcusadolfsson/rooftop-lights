@@ -343,8 +343,9 @@ router.get('/effects/types', (req: Request, res: Response) => {
     {
       type: 'converge',
       name: 'Meet in the Middle',
-      description: 'Two groups start at opposite ends and meet in the middle',
+      description: 'Two groups start at opposite ends and meet in the middle (colors: left, right, color when they meet)',
       defaultColors: [
+        { r: 0, g: 0, b: 0, w: 255 },
         { r: 0, g: 0, b: 0, w: 255 },
         { r: 0, g: 0, b: 0, w: 255 },
       ],
