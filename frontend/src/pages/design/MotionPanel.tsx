@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import type { Design, EffectType, RGBW } from '../../types';
+import type { Design, EffectType, RGBW, Wall } from '../../types';
 import { rgbwToCss } from '../../utils/color';
 import ColorPicker from './ColorPicker';
 import SavedList from './SavedList';
@@ -9,6 +9,7 @@ interface MotionPanelProps {
   editor: MotionEditor;
   designs: Design[];
   effectTypes: EffectType[];
+  walls: Wall[];
   sidebarHeader: ReactNode;
   currentColor: RGBW;
   setCurrentColor: (color: RGBW) => void;
@@ -27,7 +28,7 @@ const SCOPES = [
 ] as const;
 
 export default function MotionPanel({
-  editor, designs, effectTypes, sidebarHeader, currentColor, setCurrentColor, hasRGBW,
+  editor, designs, effectTypes, walls, sidebarHeader, currentColor, setCurrentColor, hasRGBW,
   onSaveAs, onRenameDesign, onDeleteDesign, onOpenAiGenerator, onOpenAiEditor,
 }: MotionPanelProps) {
   const { selectedDesign, effect, colors, speed, scope, params, selectedColorIdx, hasChanges } = editor;
@@ -142,6 +143,27 @@ export default function MotionPanel({
                   ))}
                 </div>
               </div>
+              {scope === 'wall' && walls.length > 0 && (() => {
+                // params.wallIds limits Per Wall to some walls; empty/missing means all of them
+                const chosen = Array.isArray(params.wallIds) ? (params.wallIds as string[]) : [];
+                const isOn = (id: string) => chosen.length === 0 || chosen.includes(id);
+                const toggle = (id: string) => {
+                  const current = walls.filter((w) => isOn(w.id)).map((w) => w.id);
+                  const next = isOn(id) ? current.filter((x) => x !== id) : [...current, id];
+                  if (next.length === 0) return; // keep at least one wall lit
+                  editor.setParam('wallIds', next.length === walls.length ? [] : next);
+                };
+                return (
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <span className="form-label">Walls</span>
+                    <div className="preview-mode-toggle" role="group" aria-label="Walls">
+                      {walls.map((w) => (
+                        <button key={w.id} className={isOn(w.id) ? 'active' : ''} aria-pressed={isOn(w.id)} onClick={() => toggle(w.id)}>{w.name}</button>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
             {Object.entries(effect.params).length > 0 && (
               <div className="form-group">

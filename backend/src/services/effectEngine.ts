@@ -72,6 +72,33 @@ function bool(v: unknown, def: boolean): boolean {
   return typeof v === 'boolean' ? v : def;
 }
 
+const ROWS = 3;
+
+/**
+ * Direction of travel for directional effects. 0° runs along the strip (the original behavior),
+ * 90° runs bottom to top, 180° reverses. Returns the unit vector (cos, sin).
+ */
+function angleVector(effect: MotionEffect): { cos: number; sin: number } {
+  const deg = num(effect.params?.angle, 0, -360, 360);
+  const rad = (deg * Math.PI) / 180;
+  // Snap tiny float noise so 0°/90°/180° give exact integer coordinates
+  const snap = (v: number) => (Math.abs(v) < 1e-9 ? 0 : v);
+  return { cos: snap(Math.cos(rad)), sin: snap(Math.sin(rad)) };
+}
+
+/** Range of the projected coordinate u = x*cos + y*sin over a segment `width` lights wide and ROWS tall. */
+function axisRange(width: number, v: { cos: number; sin: number }): { min: number; max: number } {
+  const xs = [0, (width - 1) * v.cos];
+  const ys = [0, (ROWS - 1) * v.sin];
+  return { min: Math.min(...xs) + Math.min(...ys), max: Math.max(...xs) + Math.max(...ys) };
+}
+
+/** Wall ids a Per Wall effect is limited to (empty = all walls). */
+function selectedWallIds(effect: MotionEffect): string[] {
+  const ids = effect.params?.wallIds;
+  return Array.isArray(ids) ? ids.filter((id): id is string => typeof id === 'string') : [];
+}
+
 /** Make a motion effect safe to render: colors array of RGBW, params object, valid scope. */
 export function normalizeMotionEffect(effect: unknown): MotionEffect {
   const e = isPlainObject(effect) ? effect : {};
@@ -236,9 +263,23 @@ export class EffectEngine {
 
   // Generate frame for motion effect
   generateMotionFrame(rawEffect: MotionEffect, frameNum: number): Map<number, RGBW> {
+    const effect = normalizeMotionEffect(rawEffect);
+    const frame = this.renderMotion(effect, frameNum);
+
+    // Per Wall can be limited to chosen walls; everything else stays dark
+    const wallIds = effect.scope === 'wall' ? selectedWallIds(effect) : [];
+    if (wallIds.length > 0) {
+      const keep = new Set(wallIds);
+      for (const light of this.lights) {
+        if (!keep.has(light.wall_id)) frame.set(light.light_id, { ...BLACK });
+      }
+    }
+    return frame;
+  }
+
+  private renderMotion(effect: MotionEffect, frameNum: number): Map<number, RGBW> {
     this.currentFrame = frameNum;
     const frame = new Map<number, RGBW>();
-    const effect = normalizeMotionEffect(rawEffect);
 
     switch (effect.type) {
       case 'candy_cane':
@@ -279,12 +320,15 @@ export class EffectEngine {
     const width2 = Math.round(num(effect.params?.width2 || 4, 4, 1, 100));
     const period = width1 + width2;
     const step = Math.floor(frameNum / 15);
+    // Stripe tilt from vertical; the original look is a slope of 2 lights per row (≈ -63.4°)
+    const tilt = num(effect.params?.angle, -Math.atan(2) * 180 / Math.PI, -80, 80);
+    const slope = Math.tan((tilt * Math.PI) / 180);
 
     for (let y = 0; y < 3; y++) {
       for (const row of this.getSegments(y, effect.scope)) {
         for (let j = 0; j < row.length; j++) {
           const light = row[j];
-          const pos = ((j - y * 2 + step) % period + period) % period;
+          const pos = ((Math.floor(j + y * slope + 1e-9) + step) % period + period) % period;
           frame.set(light.light_id, pos < width1 ? color1 : color2);
         }
       }
@@ -330,9 +374,13 @@ export class EffectEngine {
       frame.set(light.light_id, { r: 0, g: 0, b: 0, w: 0 });
     }
 
+    const dir = angleVector(effect);
+
     for (let y = 0; y < 3; y++) {
       for (const row of this.getSegments(y, effect.scope)) {
-        const totalWidth = row.length;
+        // Positions are measured along the angle axis; at 0° that's simply the index along the row
+        const range = axisRange(row.length, dir);
+        const totalWidth = Math.round(range.max - range.min) + 1;
         // Head steps per pass; with tailExit the head runs tailLength past the edge so the tail fully clears
         const span = totalWidth + (tailExit ? tailLength : 0);
 
@@ -360,12 +408,14 @@ export class EffectEngine {
           movingForward = !movingForward;
         }
 
-        for (let t = 0; t < tailLength; t++) {
-          const tailPos = movingForward ? pos - t : pos + t;
-          if (tailPos >= 0 && tailPos < row.length) {
+        const headU = range.min + pos;
+        for (let j = 0; j < row.length; j++) {
+          const u = j * dir.cos + y * dir.sin;
+          const t = Math.round(movingForward ? headU - u : u - headU);
+          if (t >= 0 && t < tailLength) {
             const brightness = 1 - (t / tailLength);
             const colorRatio = t / tailLength;
-            const light = row[tailPos];
+            const light = row[j];
             frame.set(light.light_id, {
               r: Math.round((headColor.r * (1 - colorRatio) + tailColor.r * colorRatio) * brightness),
               g: Math.round((headColor.g * (1 - colorRatio) + tailColor.g * colorRatio) * brightness),
@@ -415,12 +465,17 @@ export class EffectEngine {
   // Rainbow - smooth color transition across the matrix
   private generateRainbow(effect: MotionEffect, frameNum: number): Map<number, RGBW> {
     const frame = new Map<number, RGBW>();
+    const dir = angleVector(effect);
 
     for (let y = 0; y < 3; y++) {
       for (const row of this.getSegments(y, effect.scope)) {
+        const range = axisRange(row.length, dir);
+        // One full rainbow across the segment along the angle (at 0° exactly j / row.length)
+        const extent = range.max - range.min + 1;
         for (let j = 0; j < row.length; j++) {
           const light = row[j];
-          const hue = ((j / row.length) * 360 + frameNum * 1) % 360;
+          const u = j * dir.cos + y * dir.sin - range.min;
+          const hue = (((u / extent) * 360 + frameNum * 1) % 360 + 360) % 360;
           const rgb = this.hslToRgb(hue, 100, 50);
           frame.set(light.light_id, { ...rgb, w: 0 });
         }
@@ -437,6 +492,7 @@ export class EffectEngine {
     const wavelength = num(effect.params?.wavelength || 10, 10, 0.5, 1000);
     const bounce = bool(effect.params?.bounce, false);
     const waveHeight = num(effect.params?.waveHeight, 1.0, 0, 2);
+    const dir = angleVector(effect);
 
     for (let y = 0; y < 3; y++) {
       for (const row of this.getSegments(y, effect.scope)) {
@@ -456,7 +512,8 @@ export class EffectEngine {
 
         for (let j = 0; j < row.length; j++) {
           const light = row[j];
-          const phase = (j / wavelength + timeFactor) * Math.PI * 2;
+          const u = j * dir.cos + y * dir.sin;
+          const phase = (u / wavelength + timeFactor) * Math.PI * 2;
           const sinVal = Math.sin(phase);
           const brightness = sinVal * (waveHeight / 2) + (1 - waveHeight / 2);
 

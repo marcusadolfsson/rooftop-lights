@@ -87,6 +87,18 @@ export function validateMotionData(data: unknown): ValidationResult {
     return { ok: false, error: '"params" must be an object' };
   }
 
+  if (isPlainObject(params) && params.wallIds !== undefined && params.wallIds !== null) {
+    if (!Array.isArray(params.wallIds) || params.wallIds.length > 64 || !params.wallIds.every((id) => typeof id === 'string')) {
+      return { ok: false, error: 'params.wallIds must be an array of wall ids' };
+    }
+  }
+
+  if (isPlainObject(params) && params.angle !== undefined && params.angle !== null) {
+    if (typeof params.angle !== 'number' || !Number.isFinite(params.angle)) {
+      return { ok: false, error: 'params.angle must be a number of degrees' };
+    }
+  }
+
   if (type === 'ai' && isPlainObject(params) && params.code !== undefined && params.code !== null) {
     if (typeof params.code !== 'string') return { ok: false, error: 'params.code must be a string' };
     if (params.code.length > MAX_AI_CODE_LENGTH) {

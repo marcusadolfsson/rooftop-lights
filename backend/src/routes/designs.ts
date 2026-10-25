@@ -266,6 +266,7 @@ router.get('/effects/types', (req: Request, res: Response) => {
       params: {
         width1: { type: 'number', default: 4, min: 1, max: 16 },
         width2: { type: 'number', default: 4, min: 1, max: 16 },
+        angle: { type: 'number', default: -63, min: -75, max: 75, step: 1, label: 'Stripe angle (°)' },
       },
     },
     {
@@ -291,6 +292,7 @@ router.get('/effects/types', (req: Request, res: Response) => {
         reverse: { type: 'boolean', default: false },
         bounce: { type: 'boolean', default: true },
         tailExit: { type: 'boolean', default: true, label: 'Tail leaves frame before looping' },
+        angle: { type: 'number', default: 0, min: -180, max: 180, step: 15, label: 'Angle (°)' },
       },
     },
     {
@@ -308,7 +310,9 @@ router.get('/effects/types', (req: Request, res: Response) => {
       name: 'Rainbow',
       description: 'Smooth rainbow colors flowing across the display',
       defaultColors: [],
-      params: {},
+      params: {
+        angle: { type: 'number', default: 0, min: -180, max: 180, step: 15, label: 'Angle (°)' },
+      },
     },
     {
       type: 'wave',
@@ -322,6 +326,7 @@ router.get('/effects/types', (req: Request, res: Response) => {
         wavelength: { type: 'number', default: 10, min: 3, max: 32 },
         bounce: { type: 'boolean', default: false },
         waveHeight: { type: 'number', default: 1.0, min: 0.1, max: 1.0, step: 0.1 },
+        angle: { type: 'number', default: 0, min: -180, max: 180, step: 15, label: 'Angle (°)' },
       },
     },
     {

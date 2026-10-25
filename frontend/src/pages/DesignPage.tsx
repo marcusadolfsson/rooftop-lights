@@ -469,6 +469,7 @@ function DesignPage() {
           editor={motionEditor}
           designs={designs}
           effectTypes={effectTypes}
+          walls={layout?.walls ?? []}
           sidebarHeader={sidebarHeader}
           currentColor={currentColor}
           setCurrentColor={setCurrentColor}
