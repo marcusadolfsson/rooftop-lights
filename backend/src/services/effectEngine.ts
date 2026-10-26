@@ -244,6 +244,9 @@ export const STEP_FRAMES: Record<string, number> = {
   text: 6,
 };
 
+/** How long the Lightning bolt takes to drop one row (frames). */
+const STRIKE_ROW_FRAMES = 2;
+
 /** Stepped effects whose last step leads straight into the first (no restart to hide). */
 const SEAMLESS_LOOP = new Set(['candy_cane', 'checkerboard']);
 
@@ -1188,27 +1191,55 @@ export class EffectEngine {
     const coverage = num(effect.params?.coverage, 0.5, 0.1, 1);
     const slot = Math.max(10, Math.round((60 / perMinute) * FPS));
     const n = Math.floor(realFrame / slot);
+    // Optional bolt: travels down from the top row, one row every STRIKE_ROW_FRAMES, to the middle of
+    // the flash area, then the flickers start (the bolt stays lit through the first one)
+    const strike = bool(effect.params?.strike, false);
+    const strikeFrames = strike ? this.rows * STRIKE_ROW_FRAMES + 1 : 0;
+    const light = (id: number, level: number) =>
+      frame.set(id, maxColor(frame.get(id) || base, mixColor(base, flash, level)));
 
-    for (const light of this.lights) frame.set(light.light_id, { ...base });
+    for (const l of this.lights) frame.set(l.light_id, { ...base });
 
     // Check this slot and the previous one so strikes near a boundary finish cleanly
     for (const k of [n - 1, n]) {
       const start = k * slot + Math.floor(rand(k, 1) * slot * 0.6);
       const t = realFrame - start;
       const flickers = 2 + Math.floor(rand(k, 2) * 3);
-      if (t < 0 || t >= flickers * 5) continue;
-      const f = Math.floor(t / 5);
-      // Each flicker: bright flash that decays; later flickers are dimmer
-      const level = (1 - (t % 5) / 5) * (0.5 + 0.5 * rand(k, 3, f)) * (f === 0 ? 1 : 0.8);
+      if (t < 0 || t >= strikeFrames + flickers * 5) continue;
       const center = rand(k, 4);
+      const tf = t - strikeFrames; // time into the flickers (negative while the bolt is travelling)
+
+      if (strike && tf < 5) {
+        const head = Math.min(this.rows - 1, Math.floor(t / STRIKE_ROW_FRAMES));
+        for (let y = 0; y <= head; y++) {
+          for (const [s, row] of this.getSegments(y, effect.scope).entries()) {
+            const len = row.length;
+            const width = Math.max(1, Math.round(len * coverage));
+            const target = Math.round(center * (len - width)) + (width - 1) / 2;
+            // Starts 10-40% of the wall to one side, so it always comes in at an angle,
+            // with a little jitter per row so it isn't a straight line
+            const offset = (rand(k, 5, s) < 0.5 ? -1 : 1) * (0.1 + 0.3 * rand(k, 7, s)) * len;
+            const along = this.rows > 1 ? y / (this.rows - 1) : 1;
+            const jitter = y > 0 && y < this.rows - 1 ? Math.round((rand(k, 6, s, y) * 2 - 1)) : 0;
+            const x = Math.round(target + offset * (1 - along)) + jitter;
+            if (x < 0 || x >= len) continue;
+            // The tip is brightest; the path behind it glows, then fades with the first flicker
+            const level = tf >= 0 ? 1 - tf / 5 : y === head ? 1 : 0.6;
+            light(row[x].light_id, level);
+          }
+        }
+      }
+      if (tf < 0) continue;
+
+      const f = Math.floor(tf / 5);
+      // Each flicker: bright flash that decays; later flickers are dimmer
+      const level = (1 - (tf % 5) / 5) * (0.5 + 0.5 * rand(k, 3, f)) * (f === 0 ? 1 : 0.8);
       for (let y = 0; y < this.rows; y++) {
         for (const row of this.getSegments(y, effect.scope)) {
           const len = row.length;
           const width = Math.max(1, Math.round(len * coverage));
           const startX = Math.round(center * (len - width));
-          for (let j = startX; j < startX + width && j < len; j++) {
-            frame.set(row[j].light_id, maxColor(frame.get(row[j].light_id) || base, mixColor(base, flash, level)));
-          }
+          for (let j = startX; j < startX + width && j < len; j++) light(row[j].light_id, level);
         }
       }
     }
