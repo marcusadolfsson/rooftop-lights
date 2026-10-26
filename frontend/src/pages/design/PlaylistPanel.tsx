@@ -597,7 +597,7 @@ export default function PlaylistPanel({
         </div>
         <div className="card">
           <div className="card-header picker-header">
-            <h3 className="card-title">{isScene ? 'Add Design' : 'Add Design, Scene or Show'}</h3>
+            <h3 className="card-title">Add Element</h3>
             <input
               type="search"
               className="form-input picker-search"

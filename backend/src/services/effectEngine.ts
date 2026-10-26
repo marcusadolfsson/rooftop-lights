@@ -785,6 +785,7 @@ export class EffectEngine {
     const headColor: RGBW = effect.colors[0] || { r: 0, g: 0, b: 0, w: 255 };
     const tailColor: RGBW = effect.colors[1] || headColor;
     const tailLength = Math.round(num(effect.params?.tailLength, 8, 0, 200));
+    // No longer offered (an angle of 180° does the same); still honoured on older designs
     const reverse = bool(effect.params?.reverse, false);
     const bounce = bool(effect.params?.bounce, true);
     // Let the head travel past the edge until the whole tail has left the frame before looping/turning

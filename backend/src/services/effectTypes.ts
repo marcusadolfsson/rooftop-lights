@@ -89,7 +89,6 @@ const EFFECT_TYPES: Omit<EffectTypeInfo, 'colorLabels' | 'colorHint' | 'stepFram
       smooth: { type: 'boolean', default: false, label: 'Sub-pixel blending' },
       size: { type: 'number', default: 1, min: 1, max: 10, label: 'Size' },
       tailLength: { type: 'number', default: 8, min: 0, max: 20, label: 'Tail length' },
-      reverse: { type: 'boolean', default: false },
       bounce: { type: 'boolean', default: true },
       tailExit: { type: 'boolean', default: true, label: 'Tail leaves frame before looping' },
       angle: { type: 'number', default: 0, min: -180, max: 180, step: 15, label: 'Angle', unit: '°' },
