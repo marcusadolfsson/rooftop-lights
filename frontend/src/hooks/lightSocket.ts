@@ -21,6 +21,8 @@ const MAX_BACKOFF_MS = 30000;
  */
 export class LightSocketStore {
   private frame: FrameData = EMPTY_FRAME;
+  // The latest frame if it is a preview, else empty (the server is showing the scheduled output)
+  private previewFrame: FrameData = EMPTY_FRAME;
   private status: ConnectionStatus = { connected: false, dmxRate: 0 };
   private frameListeners = new Set<Listener>();
   private statusListeners = new Set<Listener>();
@@ -36,6 +38,7 @@ export class LightSocketStore {
     return () => { this.frameListeners.delete(listener); };
   };
   getFrame = () => this.frame;
+  getPreviewFrame = () => this.previewFrame;
 
   subscribeStatus = (listener: Listener) => {
     this.statusListeners.add(listener);
@@ -43,8 +46,9 @@ export class LightSocketStore {
   };
   getStatus = () => this.status;
 
-  private setFrame(frame: FrameData) {
+  private setFrame(frame: FrameData, isPreview = false) {
     this.frame = frame;
+    this.previewFrame = isPreview ? frame : EMPTY_FRAME;
     this.frameListeners.forEach((l) => l());
   }
 
@@ -109,9 +113,9 @@ export class LightSocketStore {
     ws.onmessage = (event) => {
       if (this.ws !== ws) return;
       try {
-        const message = JSON.parse(event.data) as { type: string; data: unknown; dmxRate?: number };
+        const message = JSON.parse(event.data) as { type: string; data: unknown; preview?: boolean; dmxRate?: number };
         if (message.type === 'frame') {
-          this.setFrame((message.data as FrameData) || EMPTY_FRAME);
+          this.setFrame((message.data as FrameData) || EMPTY_FRAME, message.preview === true);
           if (typeof message.dmxRate === 'number') {
             this.setStatus({ connected: true, dmxRate: message.dmxRate });
           }

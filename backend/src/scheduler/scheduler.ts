@@ -383,6 +383,8 @@ export class Scheduler {
   private tick(): void {
     const artnet = getArtNetController();
     let wsFrame: Map<number, RGBW> = BLANK;
+    // True when the WebSocket frame is a preview rather than the scheduled output
+    let wsIsPreview = false;
 
     try {
       let artnetFrame: Map<number, RGBW>;
@@ -409,6 +411,7 @@ export class Scheduler {
       this.artnetSource.frame++;
 
       // Determine what to broadcast to WebSocket (preview design takes priority)
+      wsIsPreview = !!this.previewDesign || (this.isLivePreview && !!this.livePreviewDesign);
       if (this.previewDesign) {
         // If live preview, reuse the already-rendered frame; otherwise render separately
         if (this.isLivePreview && this.livePreviewDesign === this.previewDesign) {
@@ -428,6 +431,7 @@ export class Scheduler {
       const msg = err instanceof Error ? err.message : String(err);
       logRateLimited(`Scheduler tick failed, outputting blank frame: ${msg}`, err instanceof Error ? err.stack : undefined);
       wsFrame = BLANK;
+      wsIsPreview = false;
       if (artnet) {
         try {
           this.output(artnet, BLANK, false);
@@ -438,7 +442,7 @@ export class Scheduler {
     }
 
     try {
-      this.broadcastFrame(wsFrame);
+      this.broadcastFrame(wsFrame, wsIsPreview);
     } catch (err) {
       logRateLimited(`WebSocket broadcast failed: ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -667,7 +671,7 @@ export class Scheduler {
     }
   }
 
-  private broadcastFrame(frameData: Map<number, RGBW>): void {
+  private broadcastFrame(frameData: Map<number, RGBW>, isPreview: boolean): void {
     if (this.wsClients.size === 0) return;
 
     // Only send every 3rd frame to reduce bandwidth
@@ -687,6 +691,7 @@ export class Scheduler {
     const message = JSON.stringify({
       type: 'frame',
       data: frameObj,
+      preview: isPreview,
       dmxRate: artnet ? artnet.getSendRate() : 0,
     });
 

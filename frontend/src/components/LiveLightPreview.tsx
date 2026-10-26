@@ -14,6 +14,8 @@ interface LiveLightPreviewProps {
   // Shown for lights the current frame doesn't cover (e.g. the design being edited)
   fallbackColors?: Record<number, RGBW>;
   showDefective?: boolean;
+  // Ignore the scheduled output: show only previews (and fallbackColors), dark otherwise
+  previewOnly?: boolean;
 }
 
 const NO_COLORS: Record<number, RGBW> = {};
@@ -21,8 +23,8 @@ const NO_COLORS: Record<number, RGBW> = {};
 /**
  * The only component that re-renders per WebSocket frame; the pages around it don't.
  */
-function LiveLightPreview({ walls, mode = '2d', active, fallbackColors = NO_COLORS, showDefective = false }: LiveLightPreviewProps) {
-  const frame = useFrameData(active);
+function LiveLightPreview({ walls, mode = '2d', active, fallbackColors = NO_COLORS, showDefective = false, previewOnly = false }: LiveLightPreviewProps) {
+  const frame = useFrameData(active, previewOnly);
 
   // Frame data is raw (unmasked); defective simulation is applied separately
   const colorOf = (lightId: number): RGBW | undefined => frame[lightId] ?? fallbackColors[lightId];

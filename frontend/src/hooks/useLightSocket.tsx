@@ -29,12 +29,13 @@ const getEmptyFrame = () => EMPTY_FRAME;
 /**
  * Latest frame from the server. Pass enabled=false (e.g. while the page is hidden)
  * to unsubscribe, so the component stops re-rendering on every frame.
+ * With previewOnly, the frame is empty unless something is being previewed.
  */
-export function useFrameData(enabled = true): FrameData {
+export function useFrameData(enabled = true, previewOnly = false): FrameData {
   const store = useStore();
   return useSyncExternalStore(
     enabled ? store.subscribeFrame : noopSubscribe,
-    enabled ? store.getFrame : getEmptyFrame,
+    enabled ? (previewOnly ? store.getPreviewFrame : store.getFrame) : getEmptyFrame,
   );
 }
 

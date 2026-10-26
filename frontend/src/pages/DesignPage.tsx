@@ -668,6 +668,7 @@ function DesignPage() {
             active={isVisible}
             fallbackColors={staticEditor.colors}
             showDefective={showDefective}
+            previewOnly
           />
         </div>
       )}
