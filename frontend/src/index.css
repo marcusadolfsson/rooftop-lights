@@ -2984,3 +2984,20 @@ body {
     max-width: calc(100vw - 9rem);
   }
 }
+
+/* Keep the header still while the DMX rate changes: fixed-width digits and status text, and on
+   wider screens a 3-column grid so the menu stays centred whatever the right side holds */
+.status-indicator span:last-child {
+  font-variant-numeric: tabular-nums;
+  min-width: 7.5em;
+  white-space: nowrap;
+}
+@media (min-width: 769px) {
+  .nav-content {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+  }
+  .nav-status {
+    justify-self: end;
+  }
+}
