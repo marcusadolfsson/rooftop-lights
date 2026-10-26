@@ -34,7 +34,7 @@ const PICKER_TYPES: { type: PickerType; label: string }[] = [
   { type: 'static', label: 'Static' },
   { type: 'motion', label: 'Motion' },
   { type: 'scene', label: 'Scenes' },
-  { type: 'playlist', label: 'Playlists' },
+  { type: 'playlist', label: 'Shows' },
 ];
 
 /** One row of the Add picker: a design, scene or playlist that can go into the editor. */
@@ -259,7 +259,7 @@ export default function PlaylistPanel({
 
   const renderPickerRow = (entry: PickerEntry) => {
     const isList = entry.type === 'scene' || entry.type === 'playlist';
-    const label = isList ? `Add ${entry.type} ${entry.name} to ${noun}` : `Add ${entry.name} (${entry.type}) to ${noun}`;
+    const label = isList ? `Add ${entry.type === 'playlist' ? 'show' : entry.type} ${entry.name} to ${noun}` : `Add ${entry.name} (${entry.type}) to ${noun}`;
     return (
       <tr
         key={entry.id}
@@ -454,7 +454,7 @@ export default function PlaylistPanel({
       <div className="design-sidebar">
         {sidebarHeader}
         <SavedList
-          title={isScene ? 'Saved Scenes' : 'Saved Playlists'}
+          title={isScene ? 'Saved Scenes' : 'Saved Shows'}
           items={editor.saved.map((p) => ({
             id: p.id,
             name: p.name,
@@ -522,7 +522,7 @@ export default function PlaylistPanel({
               <p className={`playlist-empty${pickerDrag ? ' drop-active' : ''}`}>
                 {isScene
                   ? `Add designs from the list below${inline ? ', or make a new one here,' : ''} to build your scene. It plays them in order, then starts again.`
-                  : 'Add designs, scenes or playlists from the list below to build your playlist.'}
+                  : 'Add designs, scenes or other shows from the list below to build your show.'}
                 <span className="drag-hint"> You can also drag them in.</span>
               </p>
               {addNewButtons}
@@ -597,7 +597,7 @@ export default function PlaylistPanel({
         </div>
         <div className="card">
           <div className="card-header picker-header">
-            <h3 className="card-title">{isScene ? 'Add Design' : 'Add Design, Scene or Playlist'}</h3>
+            <h3 className="card-title">{isScene ? 'Add Design' : 'Add Design, Scene or Show'}</h3>
             <input
               type="search"
               className="form-input picker-search"

@@ -145,7 +145,7 @@ export function usePreview({ isVisible, onError }: { isVisible: boolean; onError
       return;
     }
     if (!current) {
-      report(new Error('select an effect or playlist first'), 'Cannot start live preview');
+      report(new Error('select an effect or show first'), 'Cannot start live preview');
       return;
     }
     setLive(true);

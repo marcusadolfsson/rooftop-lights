@@ -23,7 +23,7 @@ const TABS: { id: TabType; label: string }[] = [
   { id: 'static', label: 'Static' },
   { id: 'motion', label: 'Motion' },
   { id: 'scenes', label: 'Scenes' },
-  { id: 'playlist', label: 'Playlist' },
+  { id: 'playlist', label: 'Shows' },
 ];
 
 function readShowDefective(): boolean {
@@ -868,9 +868,9 @@ function DesignPage() {
 
       {playlistSaveModal && (
         <NameModal
-          title={playlistSaveModal === 'scene' ? 'Save Scene' : 'Save Playlist'}
-          label={playlistSaveModal === 'scene' ? 'Scene Name' : 'Playlist Name'}
-          placeholder={`Enter ${playlistSaveModal} name`}
+          title={playlistSaveModal === 'scene' ? 'Save Scene' : 'Save Show'}
+          label={playlistSaveModal === 'scene' ? 'Scene Name' : 'Show Name'}
+          placeholder={`Enter ${playlistSaveModal === 'scene' ? 'scene' : 'show'} name`}
           folders={allFolders}
           onSave={(name, folder) => handleSavePlaylist(playlistSaveModal, name, folder)}
           onClose={() => setPlaylistSaveModal(null)}

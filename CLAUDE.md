@@ -127,7 +127,7 @@ Dev and production share port 3030, so run only one at a time. To test changes s
 
 ### Scenes, Playlists, Schedules
 
-- Scenes and playlists share the `playlists` table (`kind`). Scenes hold designs only.
+- Scenes and playlists share the `playlists` table (`kind`). Scenes hold designs only. The UI calls playlists **Shows**; code, API and DB keep `playlist`.
 - Playlists can nest scenes and playlists; cycles are rejected.
 - Each item plays for X seconds or X times, with a cut, fade or fade-to-black transition.
 - Timed events (playlists only): items with a `cue` (JSON: `at` a time, or `every` N minutes with an optional from/until window) are left out of the loop; the player interrupts the loop when one comes due (local time, checked per minute), plays it once, then resumes the loop where it paused.

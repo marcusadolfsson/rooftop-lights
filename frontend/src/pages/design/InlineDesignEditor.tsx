@@ -114,7 +114,7 @@ export default function InlineDesignEditor({ ctx, design, type, usage, defaultFo
 
   const shared = !isNew && (usage.lists > 0 || usage.rows > 0);
   const sharedWhere = [
-    usage.lists > 0 ? plural(usage.lists, 'other scene/playlist', 'other scenes/playlists') : '',
+    usage.lists > 0 ? plural(usage.lists, 'other scene/show', 'other scenes/shows') : '',
     usage.rows > 0 ? plural(usage.rows, `more row of this ${noun}`, `more rows of this ${noun}`) : '',
   ].filter(Boolean).join(' and ');
 

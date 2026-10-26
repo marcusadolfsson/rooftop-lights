@@ -385,7 +385,7 @@ export type MotionEditor = ReturnType<typeof useMotionEditor>;
 // Scenes and playlists share one editor. A scene holds designs only and always plays in order;
 // a playlist can also hold scenes and other playlists.
 export const playlistKind = (p: Pick<Playlist, 'kind'>): PlaylistKind => p.kind ?? 'playlist';
-export const KIND_LABEL: Record<PlaylistKind, string> = { playlist: 'Playlist', scene: 'Scene' };
+export const KIND_LABEL: Record<PlaylistKind, string> = { playlist: 'Show', scene: 'Scene' };
 
 export interface EditingPlaylistItem {
   key: string; // stable client-side identity (for React keys during drag reorder)
@@ -451,7 +451,7 @@ function playlistSnapshot(items: EditingPlaylistItem[], mode: string): string {
 
 export function usePlaylistEditor({ reload, setError, designs, playlists, kind }: Omit<EditorDeps, 'preview' | 'autoPreview'> & { designs: Design[]; playlists: Playlist[]; kind: PlaylistKind }) {
   const isScene = kind === 'scene';
-  const noun = isScene ? 'scene' : 'playlist';
+  const noun = isScene ? 'scene' : 'show';
   const saved = playlists.filter((p) => playlistKind(p) === kind);
   const [selectedPlaylist, setSelectedPlaylist] = useState<Playlist | null>(null);
   const [name, setName] = useState('');
