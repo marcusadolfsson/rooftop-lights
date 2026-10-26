@@ -1211,7 +1211,9 @@ export class EffectEngine {
 
       if (strike && tf < 5) {
         const head = Math.min(this.rows - 1, Math.floor(t / STRIKE_ROW_FRAMES));
-        for (let y = 0; y <= head; y++) {
+        // Row 0 is the bottom, so the bolt walks down from the top row (d = rows dropped so far)
+        for (let d = 0; d <= head; d++) {
+          const y = this.rows - 1 - d;
           for (const [s, row] of this.getSegments(y, effect.scope).entries()) {
             const len = row.length;
             const width = Math.max(1, Math.round(len * coverage));
@@ -1219,12 +1221,12 @@ export class EffectEngine {
             // Starts 10-40% of the wall to one side, so it always comes in at an angle,
             // with a little jitter per row so it isn't a straight line
             const offset = (rand(k, 5, s) < 0.5 ? -1 : 1) * (0.1 + 0.3 * rand(k, 7, s)) * len;
-            const along = this.rows > 1 ? y / (this.rows - 1) : 1;
-            const jitter = y > 0 && y < this.rows - 1 ? Math.round((rand(k, 6, s, y) * 2 - 1)) : 0;
+            const along = this.rows > 1 ? d / (this.rows - 1) : 1;
+            const jitter = d > 0 && d < this.rows - 1 ? Math.round((rand(k, 6, s, d) * 2 - 1)) : 0;
             const x = Math.round(target + offset * (1 - along)) + jitter;
             if (x < 0 || x >= len) continue;
             // The tip is brightest; the path behind it glows, then fades with the first flicker
-            const level = tf >= 0 ? 1 - tf / 5 : y === head ? 1 : 0.6;
+            const level = tf >= 0 ? 1 - tf / 5 : d === head ? 1 : 0.6;
             light(row[x].light_id, level);
           }
         }
