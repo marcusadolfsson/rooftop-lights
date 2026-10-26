@@ -78,7 +78,7 @@ Every page has a live preview fed over WebSocket, in 2D (the walls unrolled into
 
 - A **default** design, scene or show plays whenever nothing else is scheduled.
 
-The header shows a small live view of what the lights are showing, next to the DMX rate. Click it for a larger view; **Pin** keeps that open on every page (remembered per browser). It always shows the real output, even while the Design page previews something else.
+The header shows a small live view of what the lights are showing, next to the DMX rate. Click it to open a larger view under the header in its place, which stays open on every page until you close it with × (remembered per browser). It always shows the real output, even while the Design page previews something else.
 - **Date schedules** override it between a start date and time and an end date and time, and a priority decides between overlapping schedules.
 - The ArtNet output strip at the top shows exactly what is being sent to the lights right now.
 

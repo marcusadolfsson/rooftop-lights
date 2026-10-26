@@ -5,15 +5,17 @@ import { rgbwToCss } from '../utils/color';
 import { useFrameData } from '../hooks/useLightSocket';
 import PreviewStrip from './PreviewStrip';
 
-const PIN_KEY = 'outputMonitorPinned';
-const CELL = 4; // mini strip: px per light, plus 1 px gap; walls 4 px apart
+const OPEN_KEY = 'outputMonitorPinned';
+// Mini strip: each light is CELL_W x CELL_H px with a 1 px gap (as tall as the menu); walls 4 px apart
+const CELL_W = 8;
+const CELL_H = 11;
 const WALL_GAP = 4;
 
-function readPinned(): boolean {
-  try { return localStorage.getItem(PIN_KEY) === '1'; } catch { return false; }
+function readOpen(): boolean {
+  try { return localStorage.getItem(OPEN_KEY) === '1'; } catch { return false; }
 }
-function writePinned(pinned: boolean) {
-  try { localStorage.setItem(PIN_KEY, pinned ? '1' : '0'); } catch { /* private mode */ }
+function writeOpen(open: boolean) {
+  try { localStorage.setItem(OPEN_KEY, open ? '1' : '0'); } catch { /* private mode */ }
 }
 
 /** Tiny canvas of what the lights are showing, drawn like the preview strip (outside view). */
@@ -21,8 +23,8 @@ function MiniOutput({ walls }: { walls: Wall[] }) {
   const frame = useFrameData(true, 'output');
   const canvas = useRef<HTMLCanvasElement>(null);
   const rows = walls.length > 0 ? Math.max(...walls.map((w) => w.height)) : 3;
-  const width = walls.reduce((sum, w) => sum + w.width * (CELL + 1), 0) + Math.max(0, walls.length - 1) * WALL_GAP - 1;
-  const height = rows * (CELL + 1) - 1;
+  const width = walls.reduce((sum, w) => sum + w.width * (CELL_W + 1), 0) + Math.max(0, walls.length - 1) * WALL_GAP - 1;
+  const height = rows * (CELL_H + 1) - 1;
 
   useEffect(() => {
     const ctx = canvas.current?.getContext('2d');
@@ -35,10 +37,10 @@ function MiniOutput({ walls }: { walls: Wall[] }) {
           const light: Light | undefined = wall.matrix?.[y]?.[x];
           ctx.fillStyle = light ? rgbwToCss(frame[light.light_id], '#1f2937') : '#111';
           // Row 0 is the bottom row
-          ctx.fillRect(x0 + x * (CELL + 1), (rows - 1 - y) * (CELL + 1), CELL, CELL);
+          ctx.fillRect(x0 + x * (CELL_W + 1), (rows - 1 - y) * (CELL_H + 1), CELL_W, CELL_H);
         }
       }
-      x0 += wall.width * (CELL + 1) + WALL_GAP;
+      x0 += wall.width * (CELL_W + 1) + WALL_GAP;
     }
   }, [frame, walls, rows, width, height]);
 
@@ -58,12 +60,11 @@ function OutputStrip({ walls }: { walls: Wall[] }) {
 
 /**
  * Header button with a mini view of the light output. Clicking it opens a larger view under the
- * header, which can be pinned to stay open (remembered per browser).
+ * header (in place of the mini view) that stays open on every page until closed; remembered per browser.
  */
 export function useOutputMonitor() {
   const [walls, setWalls] = useState<Wall[]>([]);
-  const [pinned, setPinnedState] = useState(readPinned);
-  const [open, setOpen] = useState(pinned);
+  const [open, setOpenState] = useState(readOpen);
 
   useEffect(() => {
     let cancelled = false;
@@ -71,27 +72,26 @@ export function useOutputMonitor() {
     return () => { cancelled = true; };
   }, [open]);
 
-  const setPinned = (value: boolean) => {
-    setPinnedState(value);
-    writePinned(value);
-    if (value) setOpen(true);
+  const setOpen = (value: boolean) => {
+    setOpenState(value);
+    writeOpen(value);
   };
-  return { walls, open, setOpen, pinned, setPinned };
+  return { walls, open, setOpen };
 }
 
 export type OutputMonitorState = ReturnType<typeof useOutputMonitor>;
 
 export function OutputMiniButton({ monitor }: { monitor: OutputMonitorState }) {
-  const { walls, open, setOpen, pinned } = monitor;
+  const { walls, open, setOpen } = monitor;
+  if (open) return null;
   return (
     <button
       type="button"
-      className={`output-mini${open ? ' open' : ''}`}
-      data-output-toggle
-      aria-expanded={open}
+      className="output-mini"
+      aria-expanded={false}
       aria-controls="output-panel"
-      title={open ? (pinned ? 'Lights output (pinned)' : 'Hide lights output') : 'Show lights output'}
-      onClick={() => { if (!pinned) setOpen(!open); }}
+      title="Show the lights output"
+      onClick={() => setOpen(true)}
     >
       {walls.length > 0 && <MiniOutput walls={walls} />}
     </button>
@@ -99,43 +99,13 @@ export function OutputMiniButton({ monitor }: { monitor: OutputMonitorState }) {
 }
 
 export function OutputPanel({ monitor }: { monitor: OutputMonitorState }) {
-  const { walls, open, setOpen, pinned, setPinned } = monitor;
-  const panel = useRef<HTMLDivElement>(null);
-
-  // Unpinned, it closes on Esc or a click anywhere else
-  useEffect(() => {
-    if (!open || pinned) return;
-    const onDown = (e: MouseEvent) => {
-      const target = e.target as Element | null;
-      if (panel.current?.contains(target) || target?.closest('[data-output-toggle]')) return;
-      setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
-    document.addEventListener('mousedown', onDown);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('mousedown', onDown);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [open, pinned, setOpen]);
-
+  const { walls, open, setOpen } = monitor;
   if (!open) return null;
   return (
-    <div id="output-panel" ref={panel} className={`output-panel${pinned ? ' pinned' : ''}`} role="region" aria-label="Lights output">
+    <div id="output-panel" className="output-panel" role="region" aria-label="Lights output">
       <div className="output-panel-header">
         <span className="preview-strip-title">Lights output</span>
-        <div className="output-panel-actions">
-          <button
-            type="button"
-            className={`btn btn-sm ${pinned ? 'btn-primary' : 'btn-secondary'}`}
-            aria-pressed={pinned}
-            onClick={() => setPinned(!pinned)}
-            title={pinned ? 'Unpin: close when clicking elsewhere' : 'Pin: keep this open on every page'}
-          >
-            {pinned ? 'Pinned' : 'Pin'}
-          </button>
-          <button type="button" className="btn-icon" aria-label="Close lights output" onClick={() => { setPinned(false); setOpen(false); }}>×</button>
-        </div>
+        <button type="button" className="btn-icon" aria-label="Close lights output" title="Close" onClick={() => setOpen(false)}>×</button>
       </div>
       {walls.length > 0 && <OutputStrip walls={walls} />}
     </div>
