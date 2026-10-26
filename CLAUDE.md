@@ -130,11 +130,12 @@ Dev and production share port 3030, so run only one at a time. To test changes s
 - Scenes and playlists share the `playlists` table (`kind`). Scenes hold designs only.
 - Playlists can nest scenes and playlists; cycles are rejected.
 - Each item plays for X seconds or X times, with a cut, fade or fade-to-black transition.
+- Timed events (playlists only): items with a `cue` (JSON: `at` a time, or `every` N minutes with an optional from/until window) are left out of the loop; the player interrupts the loop when one comes due (local time, checked per minute), plays it once, then resumes the loop where it paused.
 - Schedule priority: date-specific schedules (by priority), then the default schedule.
 
 ### Database
 
-- **Tables:** walls, lights, wall_groups, designs (folder), playlists (kind, folder), playlist_items (design_id | child_playlist_id, repeat_mode, repeat_count, transition), schedules, artnet_config.
+- **Tables:** walls, lights, wall_groups, designs (folder), playlists (kind, folder), playlist_items (design_id | child_playlist_id, repeat_mode, repeat_count, transition, cue), schedules, artnet_config.
 - **Migrations:** run at startup and are idempotent.
 - **Backups:** back up before risky changes (`docker exec … better-sqlite3 backup`).
 

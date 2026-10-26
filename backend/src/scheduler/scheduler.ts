@@ -7,8 +7,8 @@ import { findActiveSchedule, ScheduleRow } from './activeSchedule.js';
 import { logRateLimited } from '../utils/rateLimitedLog.js';
 import {
   buildPlaylistTimeline, locate, nodeFrames, shuffleNode, timelineStartIndex,
-  PlaylistTimeline, TimelineItemRow, TimelineNode, TimelineSource,
-  locateBoundary,
+  PlaylistTimeline, TimelineItemRow, TimelineNode, TimelineSource, TimelineCue, Transition,
+  locateBoundary, cueFires,
   TRANSITION_FRAMES,
 } from '../services/playlistTimeline.js';
 
@@ -88,7 +88,7 @@ interface PlaylistStep {
   blend?: { designId: string; frame: number; t: number; mode: 'fade' | 'fade_black' };
 }
 
-class PlaylistPlayer {
+export class PlaylistPlayer {
   private signature = '';
   private index = 0;
   private current: TimelineNode | null = null;
@@ -97,33 +97,68 @@ class PlaylistPlayer {
   private sourceIndexes: number[] = [];
   // Random mode: the next item, picked early when a fade into it starts
   private pendingIndex: number | null = null;
+  // Timed event playing now (the loop is paused where it was), and what it fades in from
+  private cue: { node: TimelineNode; frame: number; transition: Transition; sourceIndex: number; from: { designId: string; frame: number } | null } | null = null;
+  // Local minute last checked for timed events (Date.now() / 60000, floored)
+  private lastMinute: number | null = null;
 
   reset(): void {
     this.signature = '';
     this.last = null;
+    this.cue = null;
   }
 
   /**
    * Returns the design to show and the frame number within it. `startAt` (an index into the
    * playlist's own items, used by the editor's per-item Play) is where playback starts; after
-   * that it continues and loops as usual.
+   * that it continues and loops as usual. Starting at a timed event plays that event first.
+   * `now` (ms) is the clock timed events go by.
    */
-  step(playlistId: string, timeline: PlaylistTimeline, startAt?: number): PlaylistStep | null {
+  step(playlistId: string, timeline: PlaylistTimeline, startAt?: number, now: number = Date.now()): PlaylistStep | null {
     const items = timeline.items;
-    if (items.length === 0) {
+    if (items.length === 0 && timeline.cues.length === 0) {
       this.reset();
       return null;
     }
 
     // Any change to the playlist identity or anything it plays restarts playback
     const signature = `${playlistId}|${timeline.signature}`;
+    const minute = Math.floor(now / 60000);
     if (signature !== this.signature) {
       this.signature = signature;
       this.sourceIndexes = timeline.sourceIndexes;
-      this.index = startAt !== undefined
-        ? timelineStartIndex(timeline, startAt)
-        : timeline.playMode === 'random' ? Math.floor(Math.random() * items.length) : 0;
-      this.startItem(items);
+      this.cue = null;
+      // Events go off when their minute starts, so one due in the current minute waits for the next
+      this.lastMinute = minute;
+      if (items.length > 0) {
+        this.index = startAt !== undefined
+          ? timelineStartIndex(timeline, startAt)
+          : timeline.playMode === 'random' ? Math.floor(Math.random() * items.length) : 0;
+        this.startItem(items);
+      } else {
+        this.current = null;
+      }
+      const startCue = startAt !== undefined ? timeline.cues.find(c => c.sourceIndex === startAt) : undefined;
+      if (startCue) this.startCue(startCue);
+    }
+
+    // A new minute: start the first event due now, unless one is already playing
+    if (minute !== this.lastMinute) {
+      this.lastMinute = minute;
+      if (!this.cue) {
+        const d = new Date(now);
+        const due = timeline.cues.find(c => cueFires(c.cue, d.getHours() * 60 + d.getMinutes()));
+        if (due) this.startCue(due);
+      }
+    }
+    if (this.cue) {
+      const shown = this.stepCue(this.cue);
+      if (shown) return shown;
+      this.cue = null;
+    }
+    if (items.length === 0) {
+      this.last = null;
+      return null;
     }
 
     if (!this.current || this.frame >= nodeFrames(this.current)) {
@@ -166,6 +201,48 @@ class PlaylistPlayer {
     return { ...this.last!, blend: { ...next, t, mode: at.transition } };
   }
 
+  private startCue(c: TimelineCue): void {
+    this.cue = { node: shuffleNode(c.node), frame: 0, transition: c.node.transition, sourceIndex: c.sourceIndex, from: this.last };
+  }
+
+  /**
+   * One frame of the timed event, or null once it has finished. Its transition is used both ways:
+   * fading in from what the loop was showing and back out to where the loop resumes.
+   */
+  private stepCue(cue: NonNullable<PlaylistPlayer['cue']>): PlaylistStep | null {
+    const total = nodeFrames(cue.node);
+    const frame = cue.frame;
+    if (frame >= total) return null;
+    cue.frame++;
+    const at = locateBoundary(cue.node, frame);
+    if (!at) return null;
+    this.last = { designId: at.leaf.designId, frame: at.frame };
+    const shown = this.last;
+    const fade = Math.max(1, Math.min(TRANSITION_FRAMES, Math.floor(total / 2)));
+    if (cue.transition !== 'cut') {
+      // Fading in: the loop's design keeps running underneath ('' renders as black)
+      if (frame < fade) {
+        const from = cue.from ? { designId: cue.from.designId, frame: cue.from.frame + frame } : { designId: '', frame: 0 };
+        return { ...from, blend: { ...shown, t: (frame + 1) / fade, mode: cue.transition } };
+      }
+      // Fading out into the loop where it was paused
+      if (total - frame <= fade) {
+        const resume = this.current ? locate(this.current, this.frame) : null;
+        const next = resume ? { designId: resume.leaf.designId, frame: resume.frame } : { designId: '', frame: 0 };
+        return { ...shown, blend: { ...next, t: (fade - (total - frame) + 1) / fade, mode: cue.transition } };
+      }
+    }
+    // Fades between the designs inside the event (a nested playlist)
+    if (!at.endsNode && at.transition !== 'cut') {
+      const inner = Math.max(1, Math.min(TRANSITION_FRAMES, Math.floor(at.leaf.frames / 2)));
+      if (at.remaining <= inner) {
+        const n = locate(cue.node, frame + at.remaining);
+        if (n) return { ...shown, blend: { designId: n.leaf.designId, frame: 0, t: (inner - at.remaining + 1) / inner, mode: at.transition } };
+      }
+    }
+    return shown;
+  }
+
   /** Index of the item that will play after the current one (chosen now in random mode, then kept). */
   private peekNextIndex(count: number, playMode: 'sequence' | 'random'): number {
     if (playMode !== 'random') return (this.index + 1) % count;
@@ -178,7 +255,17 @@ class PlaylistPlayer {
 
   /** Where playback is: top-level item index, frames into it, and the design showing. */
   position(): PlaylistPosition | null {
-    if (!this.signature || !this.current || !this.last) return null;
+    if (!this.signature || !this.last) return null;
+    if (this.cue) {
+      return {
+        itemIndex: this.cue.sourceIndex,
+        itemFrame: this.cue.frame,
+        itemFrames: nodeFrames(this.cue.node),
+        designId: this.last.designId,
+        designFrame: this.last.frame,
+      };
+    }
+    if (!this.current) return null;
     return {
       itemIndex: this.sourceIndexes[this.index] ?? this.index,
       itemFrame: this.frame,
@@ -372,7 +459,7 @@ export class Scheduler {
         design: db.prepare('SELECT id, type, data, updated_at FROM designs WHERE id = ?'),
         playlist: db.prepare('SELECT id, play_mode FROM playlists WHERE id = ?'),
         items: db.prepare(`
-          SELECT id, design_id, child_playlist_id, duration, repeat_mode, repeat_count, transition
+          SELECT id, design_id, child_playlist_id, duration, repeat_mode, repeat_count, transition, cue
           FROM playlist_items WHERE playlist_id = ? ORDER BY position
         `),
       };

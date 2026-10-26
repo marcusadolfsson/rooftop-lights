@@ -164,7 +164,17 @@ export interface PlaylistItem {
   seconds?: number;
   position: number;
   transition: 'cut' | 'fade' | 'fade_black';
+  // Set on a timed event (playlists only): it plays at these times instead of in the loop
+  cue?: Cue | null;
 }
+
+/**
+ * When a timed event plays (local time, "HH:MM"): once a day at `time`, or every `minutes` from
+ * `from` (midnight when null), only before `until` when set.
+ */
+export type Cue =
+  | { type: 'at'; time: string }
+  | { type: 'every'; minutes: number; from: string | null; until: string | null };
 
 /** What the API accepts for a playlist item. Older clients send only design_id + duration. */
 /** POST /playlists/ai/generate: the saved scene, the designs made for it, and the model's summary. */
@@ -184,6 +194,7 @@ export interface PlaylistItemInput {
   transition?: string;
   repeat_mode?: RepeatMode;
   repeat_count?: number;
+  cue?: Cue | null;
 }
 
 export interface Schedule {

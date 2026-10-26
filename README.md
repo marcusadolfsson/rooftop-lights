@@ -50,6 +50,8 @@ A web app for designing, previewing and scheduling shows on architectural RGBW l
 
 **Playlists.** The show you schedule. A playlist chains designs, scenes and other playlists, played in sequence or at random. Each item plays for a number of seconds or a number of times: a motion effect that many complete cycles (static designs and random effects like Sparkle or Fire only take seconds), a scene or nested playlist that many times through. The editor shows each item's length and the playlist total.
 
+**Timed events.** A playlist can also have timed events: a design, scene or playlist that plays at a time of day (for example 21:00), or every N minutes, optionally only between two times (for example every 30 minutes from 19:00 to 23:00). When an event comes due it interrupts the loop, plays for its seconds or times, and then the loop picks up where it left off. Its transition is used going in and coming back out. Times are the controller's local time (`TZ`).
+
 Scenes and playlists are the same thing underneath (one `playlists` table with a `kind`), so either can be converted to the other with one click in its list. Items are kept. A playlist can only become a scene if it holds designs only.
 
 In the scene and playlist editors, **Play** plays what is in the editor right now, unsaved edits included, and highlights the item that is playing. Each item also has its own play button that starts from that item and carries on through the rest. It plays in the browser preview only, unless Live Preview is on. The Add picker can be searched, and its rows can be dragged into the list at any position (on phones, tap + to add at the end).

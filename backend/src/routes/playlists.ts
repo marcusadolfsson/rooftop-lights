@@ -7,7 +7,7 @@ import { safeParseJSON } from '../services/designValidation.js';
 import { parseFolderField } from '../services/folders.js';
 import { aiErrorResponse, createSceneFromPlan, generateScenePlan, undoGeneratedScene } from '../services/aiSceneCreator.js';
 import {
-  buildPlaylistTimeline, buildTimelineItem, nodeFrames, timelineFrames, wouldCreateCycle,
+  buildPlaylistTimeline, buildTimelineItem, checkCue, itemCue, nodeFrames, timelineFrames, wouldCreateCycle,
   TIMELINE_FPS, TimelineItemRow, TimelineSource,
 } from '../services/playlistTimeline.js';
 
@@ -41,6 +41,8 @@ interface ItemFields {
   repeat_mode: 'seconds' | 'times';
   repeat_count: number;
   transition: string;
+  // JSON of the item's cue when it is a timed event (playlists only), else null
+  cue: string | null;
 }
 
 function kindOf(id: string): Kind | undefined {
@@ -54,6 +56,8 @@ function validateKind(kind: unknown): string | null {
 
 /** Why playlist `id` can't become a scene (it holds scenes or playlists), or null when it can. */
 function sceneConvertError(id: string): string | null {
+  const cues = getDatabase().prepare('SELECT COUNT(*) AS n FROM playlist_items WHERE playlist_id = ? AND cue IS NOT NULL').get(id) as { n: number };
+  if (cues.n > 0) return `Can't convert to a scene: this playlist has ${cues.n} timed event${cues.n === 1 ? '' : 's'}, which scenes can't have; remove ${cues.n === 1 ? 'it' : 'them'} first.`;
   const nested = getDatabase().prepare(`
     SELECT cp.name, cp.kind FROM playlist_items pi JOIN playlists cp ON pi.child_playlist_id = cp.id
     WHERE pi.playlist_id = ? ORDER BY pi.position
@@ -115,6 +119,9 @@ function parseItem(raw: unknown, where: string, parentId: string | null, parentK
   const duration = repeatMode === 'times' && item.duration === undefined ? DEFAULT_DURATION_SECONDS : item.duration;
   const durErr = validateDuration(duration, where);
   if (durErr) return { error: durErr };
+  const cue = checkCue(item.cue);
+  if ('error' in cue) return { error: `${where}: ${cue.error}` };
+  if (cue.cue && parentKind === 'scene') return { error: `${where}: scenes can't have timed events` };
 
   return {
     item: {
@@ -124,6 +131,7 @@ function parseItem(raw: unknown, where: string, parentId: string | null, parentK
       repeat_mode: repeatMode as 'seconds' | 'times',
       repeat_count: repeatCount as number,
       transition: typeof item.transition === 'string' && item.transition ? item.transition : 'cut',
+      cue: cue.cue ? JSON.stringify(cue.cue) : null,
     },
   };
 }
@@ -141,12 +149,12 @@ function parseItems(items: unknown, parentId: string | null, parentKind: Kind): 
 }
 
 const INSERT_ITEM_SQL = `
-  INSERT INTO playlist_items (id, playlist_id, design_id, child_playlist_id, duration, position, transition, repeat_mode, repeat_count)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  INSERT INTO playlist_items (id, playlist_id, design_id, child_playlist_id, duration, position, transition, repeat_mode, repeat_count, cue)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `;
 
 function insertItemArgs(itemId: string, playlistId: string, item: ItemFields, position: number) {
-  return [itemId, playlistId, item.design_id, item.child_playlist_id, item.duration, position, item.transition, item.repeat_mode, item.repeat_count];
+  return [itemId, playlistId, item.design_id, item.child_playlist_id, item.duration, position, item.transition, item.repeat_mode, item.repeat_count, item.cue];
 }
 
 /** Timeline data straight from the database (the scheduler uses its own cached copy). */
@@ -154,7 +162,7 @@ function dbTimelineSource(): TimelineSource {
   const db = getDatabase();
   const playlistStmt = db.prepare('SELECT play_mode FROM playlists WHERE id = ?');
   const itemsStmt = db.prepare(`
-    SELECT id, design_id, child_playlist_id, duration, repeat_mode, repeat_count
+    SELECT id, design_id, child_playlist_id, duration, repeat_mode, repeat_count, cue
     FROM playlist_items WHERE playlist_id = ? ORDER BY position
   `);
   const designStmt = db.prepare('SELECT type, data FROM designs WHERE id = ?');
@@ -196,7 +204,7 @@ function withItems(playlist: any, src: TimelineSource) {
     ...playlist,
     items: items.map((item) => {
       const node = buildTimelineItem(item, src, [playlist.id]);
-      return { ...item, is_playlist: item.child_playlist_id !== null, seconds: node ? seconds(nodeFrames(node)) : 0 };
+      return { ...item, cue: itemCue(item), is_playlist: item.child_playlist_id !== null, seconds: node ? seconds(nodeFrames(node)) : 0 };
     }),
     totalSeconds: timeline ? seconds(timelineFrames(timeline)) : 0,
   };

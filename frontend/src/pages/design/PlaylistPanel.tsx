@@ -1,9 +1,9 @@
 import { Fragment, useEffect, useRef, useState, type DragEvent, type ReactNode } from 'react';
-import type { Design, Playlist, PlaylistKind } from '../../types';
+import type { Cue, Design, Playlist, PlaylistKind } from '../../types';
 import SavedList, { trashIcon } from './SavedList';
 import { FolderHeaderRow, type FolderControls } from './Folders';
 import { canonicalFolder, groupByFolder, groupKey, hasFolders, MAX_FOLDER_LENGTH, normalizeFolder, sameFolder, useCollapsedGroups } from '../../utils/folders';
-import { formatSeconds, KIND_LABEL, MAX_REPEAT_COUNT, playlistKind, type EditingPlaylistItem, type PlaylistEditor } from './editors';
+import { DEFAULT_CUE, formatSeconds, KIND_LABEL, MAX_REPEAT_COUNT, playlistKind, type EditingPlaylistItem, type PlaylistEditor } from './editors';
 import InlineDesignEditor, { type DesignType, type InlineEditContext, type InlineSaveResult } from './InlineDesignEditor';
 
 interface PlaylistPanelProps {
@@ -44,7 +44,8 @@ interface PickerEntry {
   folder?: string | null;
   type: PickerType;
   meta?: string;
-  add: (at?: number) => void;
+  // With a cue, adds it as a timed event instead of to the loop
+  add: (at?: number, cue?: Cue) => void;
 }
 
 const PLAY_ICON = <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><polygon points="6 4 20 12 6 20 6 4"/></svg>;
@@ -68,9 +69,11 @@ export default function PlaylistPanel({
   const [moved, setMoved] = useState<{ key: string; delta: -1 | 1 } | null>(null);
   useEffect(() => {
     if (!moved) return;
-    const idx = items.findIndex((i) => i.key === moved.key);
-    if (idx < 0) return;
-    const atEnd = moved.delta === -1 ? idx === 0 : idx === items.length - 1;
+    const item = items.find((i) => i.key === moved.key);
+    if (!item) return;
+    const list = items.filter((i) => !i.cue === !item.cue);
+    const idx = list.indexOf(item);
+    const atEnd = moved.delta === -1 ? idx === 0 : idx === list.length - 1;
     const delta = atEnd ? -moved.delta : moved.delta;
     moveButtons.current.get(`${moved.key}:${delta}`)?.focus();
     setMoved(null);
@@ -187,12 +190,12 @@ export default function PlaylistPanel({
   const entries: PickerEntry[] = [
     ...designs.map((d): PickerEntry => ({
       id: d.id, name: d.name, folder: d.folder, type: d.type,
-      add: (at) => editor.addDesign(d.id, at),
+      add: (at, cue) => editor.addDesign(d.id, at, cue),
     })),
     ...[...addableScenes, ...addablePlaylists].map((p): PickerEntry => ({
       id: p.id, name: p.name, folder: p.folder, type: playlistKind(p),
       meta: `${p.items.length} items${p.totalSeconds ? ` · ${formatSeconds(p.totalSeconds)}` : ''}`,
-      add: (at) => editor.addPlaylist(p.id, at),
+      add: (at, cue) => editor.addPlaylist(p.id, at, cue),
     })),
   ];
   const showPickerFolders = hasFolders(entries);
@@ -215,6 +218,27 @@ export default function PlaylistPanel({
       if (clientY < rect.top + rect.height / 2) return Number(row.dataset.itemIndex);
     }
     return items.length;
+  };
+  // Dropped on the Timed events list: added as an event
+  const [eventDrop, setEventDrop] = useState(false);
+  const onEventsDragOver = (e: DragEvent<HTMLElement>) => {
+    if (!pickerDrag) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = 'copy';
+    if (dropIndex !== null) setDropIndex(null);
+    if (!eventDrop) setEventDrop(true);
+  };
+  const onEventsDragLeave = (e: DragEvent<HTMLElement>) => {
+    if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setEventDrop(false);
+  };
+  const onEventsDrop = (e: DragEvent<HTMLElement>) => {
+    if (!pickerDrag) return;
+    e.preventDefault();
+    e.stopPropagation();
+    pickerDrag.add(undefined, DEFAULT_CUE);
+    setEventDrop(false);
+    endPickerDrag();
   };
   const onEditorDragOver = (e: DragEvent<HTMLElement>) => {
     if (!pickerDrag) return;
@@ -324,6 +348,107 @@ export default function PlaylistPanel({
     </div>
   );
 
+  const loopItems = items.filter((i) => !i.cue);
+  const eventItems = items.filter((i) => i.cue);
+
+  // One item row (and its inline editor); `list` is the list it sits in (the loop or the events)
+  const renderRow = (item: EditingPlaylistItem, list: EditingPlaylistItem[]) => {
+      const idx = items.indexOf(item);
+    const isEvent = item.cue !== null;
+    const mode = editor.effectiveMode(item);
+      const noTimes = noTimesReason(item);
+      const label = itemLabel(item);
+      const itemDesign = item.design_id ? designs.find((d) => d.id === item.design_id) : undefined;
+      const editing = inlineTarget?.kind === 'item' && inlineTarget.key === item.key;
+      return (
+      <Fragment key={item.key}>
+      <div
+        data-item-index={isEvent ? undefined : idx}
+        className={[
+          'playlist-item',
+          editing ? 'editing' : '',
+          dragKey === item.key ? 'dragging' : '',
+          isPlaying && playingIndex === idx ? 'playing' : '',
+          !isEvent && dropIndex === idx ? 'drop-before' : '',
+          !isEvent && dropIndex === items.length && item === list[list.length - 1] ? 'drop-after' : '',
+        ].filter(Boolean).join(' ')}
+        aria-current={isPlaying && playingIndex === idx ? 'true' : undefined}
+        draggable
+        onDragStart={() => editor.dragStart(item.key)}
+        onDragOver={(e) => editor.dragOver(e, item.key)}
+        onDragEnd={editor.dragEnd}
+      >
+        <span
+          className="playlist-item-drag"
+          title="Drag to reorder (or focus and use arrow keys)"
+          role="button"
+          tabIndex={0}
+          aria-label={`Reorder ${label}, position ${list.indexOf(item) + 1} of ${list.length}. Use up and down arrow keys to move.`}
+          onKeyDown={(e) => {
+            if (e.key === 'ArrowUp') { e.preventDefault(); editor.moveItem(item.key, -1); }
+            if (e.key === 'ArrowDown') { e.preventDefault(); editor.moveItem(item.key, 1); }
+          }}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><circle cx="9" cy="6" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="18" r="1"/></svg>
+        </span>
+        {inline && item.design_id && (
+          // Disclosure triangle: shows the design's details (its editor) under the row
+          <button
+            type="button"
+            className={`btn-icon playlist-item-disclosure${editing ? ' open' : ''}`}
+            title={!itemDesign?.data ? 'This design can\'t be edited (missing or corrupt)' : editing ? 'Hide details' : 'Show details'}
+            aria-label={`${editing ? 'Hide' : 'Show'} details for ${label}`}
+            aria-expanded={editing}
+            disabled={!itemDesign?.data}
+            onClick={() => toggleInline(item.key)}
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5l10 7-10 7z"/></svg>
+          </button>
+        )}
+        <span className="playlist-item-name">
+          {label}{' '}
+          {item.child_playlist_id
+            ? <span className={`playlist-tag${childKind(item.child_playlist_id) === 'scene' ? ' scene-tag' : ''}`}>{KIND_LABEL[childKind(item.child_playlist_id)]}</span>
+            : <span style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }}>({item.design_type})</span>}
+        </span>
+        {item.cue && <CueEditor cue={item.cue} label={label} onChange={(cue) => editor.updateCue(item.key, cue)} />}
+        <span className="playlist-item-timing">
+          {/* Play for X seconds, or X complete cycles (designs) / times through (playlists) */}
+          <span className="preview-mode-toggle playlist-item-mode" role="group" aria-label={`How long ${label} plays`}>
+            <button type="button" className={mode === 'seconds' ? 'active' : ''} aria-pressed={mode === 'seconds'} onClick={() => editor.updateItem(item.key, 'repeat_mode', 'seconds')}>sec</button>
+            <span title={noTimes ?? (item.child_playlist_id ? `Play the whole ${childKind(item.child_playlist_id)} this many times` : 'Play this many complete cycles of the effect')}>
+              <button type="button" className={mode === 'times' ? 'active' : ''} aria-pressed={mode === 'times'} disabled={noTimes !== null} onClick={() => editor.updateItem(item.key, 'repeat_mode', 'times')}>times</button>
+            </span>
+          </span>
+          {mode === 'seconds' ? (
+            <input type="number" className="form-input playlist-item-duration" aria-label={`Seconds to play ${label}`} value={item.duration} min="1" onChange={(e) => editor.updateItem(item.key, 'duration', Math.max(1, parseInt(e.target.value) || 1))} />
+          ) : (
+            <input type="number" className="form-input playlist-item-duration" aria-label={`Times to play ${label}`} value={item.repeat_count} min="1" max={MAX_REPEAT_COUNT} onChange={(e) => editor.updateItem(item.key, 'repeat_count', Math.min(MAX_REPEAT_COUNT, Math.max(1, parseInt(e.target.value) || 1)))} />
+          )}
+          <span className="playlist-item-length" title={mode === 'times' ? `${editor.cycleSeconds(item)} s each` : undefined}>{formatSeconds(editor.itemSeconds(item))}</span>
+        </span>
+        <select className="form-select" aria-label="Transition" style={{ width: 'auto', padding: '0.4rem 0.5rem', fontSize: '0.8rem' }} value={item.transition} onChange={(e) => editor.updateItem(item.key, 'transition', e.target.value)}>
+          <option value="cut">Cut</option>
+          <option value="fade">Fade</option>
+          <option value="fade_black">Fade to Black</option>
+        </select>
+        {/* HTML drag and drop doesn't work with touch, so phones get move buttons */}
+        <span className="playlist-item-move">
+          <button type="button" className="btn-icon" ref={moveButtonRef(item.key, -1)} aria-label={`Move ${label} up`} disabled={list[0] === item} onClick={() => move(item.key, -1)}>↑</button>
+          <button type="button" className="btn-icon" ref={moveButtonRef(item.key, 1)} aria-label={`Move ${label} down`} disabled={list[list.length - 1] === item} onClick={() => move(item.key, 1)}>↓</button>
+        </span>
+        <button className="btn-icon playlist-item-play" style={{ padding: '0.2rem' }} title={isEvent ? 'Play this event now, then the loop' : 'Play from here'} aria-label={isEvent ? `Play event ${label} now` : `Play from ${label}`} onClick={() => onPlay(idx)}>
+          {PLAY_ICON}
+        </button>
+        <button className="btn-icon" style={{ padding: '0.2rem', color: 'var(--danger-color)' }} title="Remove" aria-label={`Remove ${label}`} onClick={() => removeItem(item.key)}>
+          {trashIcon(14)}
+        </button>
+      </div>
+      {editing && itemDesign && renderInlineEditor(item.key, itemDesign, itemDesign.type)}
+      </Fragment>
+      );
+  };
+
   return (
     <div className="design-layout">
       <div className="design-sidebar">
@@ -392,7 +517,7 @@ export default function PlaylistPanel({
             </div>
           </div>
           <div className="playlist-drop-zone" onDragOver={onEditorDragOver} onDragLeave={onEditorDragLeave} onDrop={onEditorDrop}>
-          {items.length === 0 && inlineTarget?.kind !== 'new' ? (
+          {loopItems.length === 0 && inlineTarget?.kind !== 'new' ? (
             <>
               <p className={`playlist-empty${pickerDrag ? ' drop-active' : ''}`}>
                 {isScene
@@ -404,99 +529,7 @@ export default function PlaylistPanel({
             </>
           ) : (
             <div className="playlist-items">
-              {items.map((item, idx) => {
-                const mode = editor.effectiveMode(item);
-                const noTimes = noTimesReason(item);
-                const label = itemLabel(item);
-                const itemDesign = item.design_id ? designs.find((d) => d.id === item.design_id) : undefined;
-                const editing = inlineTarget?.kind === 'item' && inlineTarget.key === item.key;
-                return (
-                <Fragment key={item.key}>
-                <div
-                  data-item-index={idx}
-                  className={[
-                    'playlist-item',
-                    editing ? 'editing' : '',
-                    dragKey === item.key ? 'dragging' : '',
-                    isPlaying && playingIndex === idx ? 'playing' : '',
-                    dropIndex === idx ? 'drop-before' : '',
-                    dropIndex === items.length && idx === items.length - 1 ? 'drop-after' : '',
-                  ].filter(Boolean).join(' ')}
-                  aria-current={isPlaying && playingIndex === idx ? 'true' : undefined}
-                  draggable
-                  onDragStart={() => editor.dragStart(item.key)}
-                  onDragOver={(e) => editor.dragOver(e, item.key)}
-                  onDragEnd={editor.dragEnd}
-                >
-                  <span
-                    className="playlist-item-drag"
-                    title="Drag to reorder (or focus and use arrow keys)"
-                    role="button"
-                    tabIndex={0}
-                    aria-label={`Reorder ${label}, position ${idx + 1} of ${items.length}. Use up and down arrow keys to move.`}
-                    onKeyDown={(e) => {
-                      if (e.key === 'ArrowUp') { e.preventDefault(); editor.moveItem(item.key, -1); }
-                      if (e.key === 'ArrowDown') { e.preventDefault(); editor.moveItem(item.key, 1); }
-                    }}
-                  >
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><circle cx="9" cy="6" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="18" r="1"/></svg>
-                  </span>
-                  {inline && item.design_id && (
-                    // Disclosure triangle: shows the design's details (its editor) under the row
-                    <button
-                      type="button"
-                      className={`btn-icon playlist-item-disclosure${editing ? ' open' : ''}`}
-                      title={!itemDesign?.data ? 'This design can\'t be edited (missing or corrupt)' : editing ? 'Hide details' : 'Show details'}
-                      aria-label={`${editing ? 'Hide' : 'Show'} details for ${label}`}
-                      aria-expanded={editing}
-                      disabled={!itemDesign?.data}
-                      onClick={() => toggleInline(item.key)}
-                    >
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5l10 7-10 7z"/></svg>
-                    </button>
-                  )}
-                  <span className="playlist-item-name">
-                    {label}{' '}
-                    {item.child_playlist_id
-                      ? <span className={`playlist-tag${childKind(item.child_playlist_id) === 'scene' ? ' scene-tag' : ''}`}>{KIND_LABEL[childKind(item.child_playlist_id)]}</span>
-                      : <span style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }}>({item.design_type})</span>}
-                  </span>
-                  <span className="playlist-item-timing">
-                    {/* Play for X seconds, or X complete cycles (designs) / times through (playlists) */}
-                    <span className="preview-mode-toggle playlist-item-mode" role="group" aria-label={`How long ${label} plays`}>
-                      <button type="button" className={mode === 'seconds' ? 'active' : ''} aria-pressed={mode === 'seconds'} onClick={() => editor.updateItem(item.key, 'repeat_mode', 'seconds')}>sec</button>
-                      <span title={noTimes ?? (item.child_playlist_id ? `Play the whole ${childKind(item.child_playlist_id)} this many times` : 'Play this many complete cycles of the effect')}>
-                        <button type="button" className={mode === 'times' ? 'active' : ''} aria-pressed={mode === 'times'} disabled={noTimes !== null} onClick={() => editor.updateItem(item.key, 'repeat_mode', 'times')}>times</button>
-                      </span>
-                    </span>
-                    {mode === 'seconds' ? (
-                      <input type="number" className="form-input playlist-item-duration" aria-label={`Seconds to play ${label}`} value={item.duration} min="1" onChange={(e) => editor.updateItem(item.key, 'duration', Math.max(1, parseInt(e.target.value) || 1))} />
-                    ) : (
-                      <input type="number" className="form-input playlist-item-duration" aria-label={`Times to play ${label}`} value={item.repeat_count} min="1" max={MAX_REPEAT_COUNT} onChange={(e) => editor.updateItem(item.key, 'repeat_count', Math.min(MAX_REPEAT_COUNT, Math.max(1, parseInt(e.target.value) || 1)))} />
-                    )}
-                    <span className="playlist-item-length" title={mode === 'times' ? `${editor.cycleSeconds(item)} s each` : undefined}>{formatSeconds(editor.itemSeconds(item))}</span>
-                  </span>
-                  <select className="form-select" aria-label="Transition" style={{ width: 'auto', padding: '0.4rem 0.5rem', fontSize: '0.8rem' }} value={item.transition} onChange={(e) => editor.updateItem(item.key, 'transition', e.target.value)}>
-                    <option value="cut">Cut</option>
-                    <option value="fade">Fade</option>
-                    <option value="fade_black">Fade to Black</option>
-                  </select>
-                  {/* HTML drag and drop doesn't work with touch, so phones get move buttons */}
-                  <span className="playlist-item-move">
-                    <button type="button" className="btn-icon" ref={moveButtonRef(item.key, -1)} aria-label={`Move ${label} up`} disabled={idx === 0} onClick={() => move(item.key, -1)}>↑</button>
-                    <button type="button" className="btn-icon" ref={moveButtonRef(item.key, 1)} aria-label={`Move ${label} down`} disabled={idx === items.length - 1} onClick={() => move(item.key, 1)}>↓</button>
-                  </span>
-                  <button className="btn-icon playlist-item-play" style={{ padding: '0.2rem' }} title="Play from here" aria-label={`Play from ${label}`} onClick={() => onPlay(idx)}>
-                    {PLAY_ICON}
-                  </button>
-                  <button className="btn-icon" style={{ padding: '0.2rem', color: 'var(--danger-color)' }} title="Remove" aria-label={`Remove ${label}`} onClick={() => removeItem(item.key)}>
-                    {trashIcon(14)}
-                  </button>
-                </div>
-                {editing && itemDesign && renderInlineEditor(item.key, itemDesign, itemDesign.type)}
-                </Fragment>
-                );
-              })}
+              {loopItems.map((item) => renderRow(item, loopItems))}
               {inlineTarget?.kind === 'new' && (
                 <>
                   <div className="playlist-item editing playlist-item-draft">
@@ -509,9 +542,9 @@ export default function PlaylistPanel({
                 </>
               )}
               {(() => {
-                const total = items.length > 0 && (
+                const total = loopItems.length > 0 && (
                   <div className="playlist-total">
-                    {editor.mode === 'random' ? 'One round of every item' : 'Total'} <strong>{formatSeconds(editor.totalSeconds)}</strong>
+                    {editor.mode === 'random' ? 'One round of every item' : eventItems.length > 0 ? 'Loop' : 'Total'} <strong>{formatSeconds(editor.totalSeconds)}</strong>
                   </div>
                 );
                 return inline ? <div className="playlist-footer">{addNewButtons}{total}</div> : total;
@@ -519,6 +552,48 @@ export default function PlaylistPanel({
             </div>
           )}
           </div>
+          {!isScene && (
+            <div
+              className={`playlist-events${eventDrop ? ' drop-active' : ''}`}
+              onDragOver={onEventsDragOver}
+              onDragLeave={onEventsDragLeave}
+              onDrop={onEventsDrop}
+            >
+              <div className="playlist-events-header">
+                <h4>Timed events</h4>
+                <select
+                  className="form-select playlist-events-add"
+                  aria-label="Add a timed event"
+                  value=""
+                  onChange={(e) => {
+                    const entry = entries.find((x) => `${x.type}:${x.id}` === e.target.value);
+                    entry?.add(undefined, DEFAULT_CUE);
+                  }}
+                >
+                  <option value="">+ Add event…</option>
+                  {PICKER_TYPES.map(({ type, label }) => {
+                    const ofType = entries.filter((x) => x.type === type);
+                    return ofType.length === 0 ? null : (
+                      <optgroup key={type} label={label}>
+                        {ofType.map((x) => <option key={x.id} value={`${x.type}:${x.id}`}>{x.name}</option>)}
+                      </optgroup>
+                    );
+                  })}
+                </select>
+              </div>
+              {eventItems.length === 0 ? (
+                <p className="playlist-events-empty">
+                  Play something at set times, like a show at 21:00 or every 30 minutes. It interrupts the loop, plays for its seconds or times, then the loop carries on where it left off.
+                  <span className="drag-hint"> You can drag designs here too.</span>
+                </p>
+              ) : (
+                <>
+                  <div className="playlist-items">{eventItems.map((item) => renderRow(item, eventItems))}</div>
+                  <p className="playlist-events-note">Times are the controller's local time. When two events are due at once, the higher one plays; one that comes due while another is playing is skipped. The transition is used going in and coming back out.</p>
+                </>
+              )}
+            </div>
+          )}
         </div>
         <div className="card">
           <div className="card-header picker-header">
@@ -542,5 +617,40 @@ export default function PlaylistPanel({
         </div>
       </div>
     </div>
+  );
+}
+
+/** When a timed event plays: at a time of day, or every N minutes (optionally only between two times). */
+function CueEditor({ cue, label, onChange }: { cue: Cue; label: string; onChange: (cue: Cue) => void }) {
+  return (
+    <span className="cue-editor">
+      <select
+        className="form-select"
+        aria-label={`When ${label} plays`}
+        value={cue.type}
+        onChange={(e) => onChange(e.target.value === 'every'
+          ? { type: 'every', minutes: 30, from: null, until: null }
+          : { type: 'at', time: cue.type === 'every' && cue.from ? cue.from : '21:00' })}
+      >
+        <option value="at">At</option>
+        <option value="every">Every</option>
+      </select>
+      {cue.type === 'at' ? (
+        <input type="time" className="form-input cue-time" aria-label={`Time ${label} plays`} value={cue.time} required
+          onChange={(e) => { if (e.target.value) onChange({ ...cue, time: e.target.value }); }} />
+      ) : (
+        <>
+          <input type="number" className="form-input cue-minutes" aria-label={`Minutes between plays of ${label}`} min="1" max="1440" value={cue.minutes}
+            onChange={(e) => onChange({ ...cue, minutes: Math.min(1440, Math.max(1, parseInt(e.target.value) || 1)) })} />
+          <span className="cue-unit">min</span>
+          <span className="cue-unit">from</span>
+          <input type="time" className="form-input cue-time" aria-label={`Start of the window for ${label} (empty = midnight)`} value={cue.from ?? ''}
+            onChange={(e) => onChange({ ...cue, from: e.target.value || null })} />
+          <span className="cue-unit">to</span>
+          <input type="time" className="form-input cue-time" aria-label={`End of the window for ${label} (empty = all day)`} value={cue.until ?? ''}
+            onChange={(e) => onChange({ ...cue, until: e.target.value || null })} />
+        </>
+      )}
+    </span>
   );
 }

@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { getScheduler, PlaylistPreviewData } from '../scheduler/scheduler.js';
-import type { TimelineItemRow } from '../services/playlistTimeline.js';
+import { checkCue, type TimelineItemRow } from '../services/playlistTimeline.js';
 import { getDatabase } from '../models/database.js';
 import { validateDesign, validateMotionData, safeParseJSON } from '../services/designValidation.js';
 
@@ -102,6 +102,8 @@ function parsePreviewItems(raw: unknown): { items: TimelineItemRow[] } | { error
     if (transition !== 'cut' && transition !== 'fade' && transition !== 'fade_black') {
       return { error: `${where}: transition must be "cut", "fade" or "fade_black"` };
     }
+    const cue = checkCue(item.cue);
+    if ('error' in cue) return { error: `${where}: ${cue.error}` };
     items.push({
       id: `item${i}`,
       design_id: designId as string | null,
@@ -110,6 +112,7 @@ function parsePreviewItems(raw: unknown): { items: TimelineItemRow[] } | { error
       repeat_mode: repeatMode,
       repeat_count: repeatCount as number,
       transition,
+      cue: cue.cue,
     });
   }
   return { items };

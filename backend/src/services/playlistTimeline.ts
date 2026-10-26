@@ -27,6 +27,76 @@ export interface TimelineItemRow {
   repeat_mode: string;
   repeat_count: number;
   transition?: string | null;
+  // Set on a timed event: JSON of a Cue (as stored) or the Cue itself. Events are left out of the loop.
+  cue?: string | Cue | null;
+}
+
+/**
+ * When a timed event plays, in local time: once a day at `time`, or every `minutes` counted from
+ * `from` (midnight when null), only before `until` when set (a window past midnight wraps).
+ * Times are "HH:MM".
+ */
+export type Cue =
+  | { type: 'at'; time: string }
+  | { type: 'every'; minutes: number; from: string | null; until: string | null };
+
+const MAX_CUE_MINUTES = 24 * 60;
+
+/** Minutes since midnight of an "HH:MM" time, or null when it isn't one. */
+export function parseClock(v: unknown): number | null {
+  if (typeof v !== 'string') return null;
+  const m = /^(\d{1,2}):(\d{2})$/.exec(v.trim());
+  if (!m) return null;
+  const h = Number(m[1]), min = Number(m[2]);
+  return h < 24 && min < 60 ? h * 60 + min : null;
+}
+
+const clock = (minutes: number) => `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
+
+/** Validate a cue from the API or the database: the normalised cue, null for none, or an error message. */
+export function checkCue(raw: unknown): { cue: Cue | null } | { error: string } {
+  if (raw === null || raw === undefined || raw === '') return { cue: null };
+  let v = raw;
+  if (typeof v === 'string') {
+    try { v = JSON.parse(v); } catch { return { error: 'cue must be an object' }; }
+  }
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return { error: 'cue must be an object' };
+  const c = v as Record<string, unknown>;
+  if (c.type === 'at') {
+    const time = parseClock(c.time);
+    if (time === null) return { error: 'cue.time must be a time like "21:00"' };
+    return { cue: { type: 'at', time: clock(time) } };
+  }
+  if (c.type === 'every') {
+    const minutes = Number(c.minutes);
+    if (!Number.isInteger(minutes) || minutes < 1 || minutes > MAX_CUE_MINUTES) {
+      return { error: `cue.minutes must be a whole number from 1 to ${MAX_CUE_MINUTES}` };
+    }
+    const from = c.from === null || c.from === undefined || c.from === '' ? null : parseClock(c.from);
+    if (from === null && c.from !== null && c.from !== undefined && c.from !== '') return { error: 'cue.from must be a time like "19:00"' };
+    const until = c.until === null || c.until === undefined || c.until === '' ? null : parseClock(c.until);
+    if (until === null && c.until !== null && c.until !== undefined && c.until !== '') return { error: 'cue.until must be a time like "23:00"' };
+    return { cue: { type: 'every', minutes, from: from === null ? null : clock(from), until: until === null ? null : clock(until) } };
+  }
+  return { error: 'cue.type must be "at" or "every"' };
+}
+
+/** The cue of an item, or null when it is a normal (looping) item or its cue is unreadable. */
+export function itemCue(item: { cue?: string | Cue | null }): Cue | null {
+  const checked = checkCue(item.cue);
+  return 'cue' in checked ? checked.cue : null;
+}
+
+/** Does `cue` go off at `minuteOfDay` (0..1439, local time)? */
+export function cueFires(cue: Cue, minuteOfDay: number): boolean {
+  if (cue.type === 'at') return parseClock(cue.time) === minuteOfDay;
+  const from = parseClock(cue.from) ?? 0;
+  const until = parseClock(cue.until);
+  if (until !== null && until !== from) {
+    const inside = from < until ? minuteOfDay >= from && minuteOfDay < until : minuteOfDay >= from || minuteOfDay < until;
+    if (!inside) return false;
+  }
+  return ((minuteOfDay - from + 1440) % 1440) % cue.minutes === 0;
 }
 
 export interface TimelinePlaylist {
@@ -68,8 +138,18 @@ export interface TimelineGroup {
 
 export type TimelineNode = TimelineLeaf | TimelineGroup;
 
+/** A timed event: interrupts the loop when its cue goes off, plays `node` once, then the loop resumes. */
+export interface TimelineCue {
+  cue: Cue;
+  node: TimelineNode;
+  // Position in the playlist's own item list
+  sourceIndex: number;
+}
+
 export interface PlaylistTimeline {
   playMode: 'sequence' | 'random';
+  // Timed events of the top playlist (nested playlists' events don't play), in list order
+  cues: TimelineCue[];
   // One node per top-level item (items that resolve to nothing are left out)
   items: TimelineNode[];
   // Position in the playlist's own item list of each entry of `items`
@@ -131,6 +211,8 @@ export function buildTimelineItem(item: TimelineItemRow, src: TimelineSource, st
 function buildItems(items: TimelineItemRow[], src: TimelineSource, stack: string[], keyPrefix: string, sourceIndexes?: number[]): TimelineNode[] {
   const out: TimelineNode[] = [];
   items.forEach((item, index) => {
+    // Timed events aren't part of the loop
+    if (itemCue(item)) return;
     const node = buildTimelineItem(item, src, stack, keyPrefix);
     if (!node) return;
     out.push(node);
@@ -149,8 +231,16 @@ export function buildPlaylistTimeline(playlistId: string, src: TimelineSource): 
   if (!playlist) return null;
   const sourceIndexes: number[] = [];
   const items = buildItems(playlist.items, src, [playlistId], '', sourceIndexes);
+  const cues: TimelineCue[] = [];
+  playlist.items.forEach((item, sourceIndex) => {
+    const cue = itemCue(item);
+    if (!cue) return;
+    const node = buildTimelineItem(item, src, [playlistId], '');
+    if (node) cues.push({ cue, node, sourceIndex });
+  });
   const playMode = playlist.play_mode === 'random' ? 'random' : 'sequence';
-  return { playMode, items, sourceIndexes, signature: `${playMode}|${items.map(signatureOf).join(',')}` };
+  const cueSignature = cues.map(c => `${JSON.stringify(c.cue)}>${signatureOf(c.node)}`).join(',');
+  return { playMode, items, cues, sourceIndexes, signature: `${playMode}|${items.map(signatureOf).join(',')}|${cueSignature}` };
 }
 
 /** Timeline index to start at so playback begins with item `itemIndex` of the playlist (or the next one that plays). */

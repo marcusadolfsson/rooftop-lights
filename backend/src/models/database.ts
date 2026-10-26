@@ -40,6 +40,7 @@ const PLAYLIST_ITEMS_COLUMNS = `
       transition TEXT DEFAULT 'cut',
       repeat_mode TEXT NOT NULL DEFAULT 'seconds' CHECK (repeat_mode IN ('seconds', 'times')),
       repeat_count INTEGER NOT NULL DEFAULT 1 CHECK (repeat_count >= 1),
+      cue TEXT DEFAULT NULL,
       CHECK ((design_id IS NULL) <> (child_playlist_id IS NULL)),
       FOREIGN KEY (playlist_id) REFERENCES playlists(id) ON DELETE CASCADE,
       FOREIGN KEY (design_id) REFERENCES designs(id) ON DELETE CASCADE,
@@ -195,6 +196,12 @@ function initializeTables(): void {
   // TABLE can't do, so the table is rebuilt once (when child_playlist_id is missing)
   if (!piColumns.some(col => col.name === 'child_playlist_id')) {
     migratePlaylistItemsToNested(database);
+  }
+
+  // Migration: timed events (an item with a cue plays at set times instead of in the loop)
+  const piColumnsNow = database.prepare("PRAGMA table_info(playlist_items)").all() as { name: string }[];
+  if (!piColumnsNow.some(col => col.name === 'cue')) {
+    database.exec('ALTER TABLE playlist_items ADD COLUMN cue TEXT DEFAULT NULL');
   }
 
   // Schedule table

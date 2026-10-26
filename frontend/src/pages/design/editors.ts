@@ -1,7 +1,7 @@
 import { useEffect, useState, type DragEvent } from 'react';
 import { designsAPI, playlistsAPI } from '../../utils/api';
 import type { PreviewControls } from '../../hooks/usePreview';
-import type { Design, EffectType, MotionDesignData, Playlist, PlaylistItemInput, PlaylistKind, RepeatMode, RGBW, StaticDesignData, Wall } from '../../types';
+import type { Cue, Design, EffectType, MotionDesignData, Playlist, PlaylistItemInput, PlaylistKind, RepeatMode, RGBW, StaticDesignData, Wall } from '../../types';
 import type { ColorTool } from './ColorPicker';
 
 export interface EditorDeps {
@@ -398,7 +398,11 @@ export interface EditingPlaylistItem {
   repeat_mode: RepeatMode;
   repeat_count: number;
   transition: string;
+  // A timed event (playlists only) plays at these times, interrupting the loop; null = in the loop
+  cue: Cue | null;
 }
+
+export const DEFAULT_CUE: Cue = { type: 'at', time: '21:00' };
 
 let nextItemKey = 0;
 const newItemKey = () => `item-${++nextItemKey}`;
@@ -441,7 +445,7 @@ function containsPlaylist(playlists: Playlist[], childId: string, parentId: stri
 function playlistSnapshot(items: EditingPlaylistItem[], mode: string): string {
   return JSON.stringify({
     mode,
-    items: items.map((i) => [i.design_id, i.child_playlist_id, i.duration, i.repeat_mode, i.repeat_count, i.transition]),
+    items: items.map((i) => [i.design_id, i.child_playlist_id, i.duration, i.repeat_mode, i.repeat_count, i.transition, i.cue]),
   });
 }
 
@@ -478,6 +482,7 @@ export function usePlaylistEditor({ reload, setError, designs, playlists, kind }
       repeat_mode: i.repeat_mode === 'times' ? 'times' : 'seconds',
       repeat_count: i.repeat_count || 1,
       transition: i.transition || 'cut',
+      cue: isScene ? null : i.cue ?? null,
     }));
     setItems(loaded);
     setMode(isScene ? 'sequence' : playlist.play_mode);
@@ -499,14 +504,15 @@ export function usePlaylistEditor({ reload, setError, designs, playlists, kind }
     });
   };
 
-  const addDesign = (designId: string, at?: number) => {
+  // With `cue`, the design is added as a timed event (one cycle when it has one, else 10 s)
+  const addDesign = (designId: string, at?: number, cue: Cue | null = null) => {
     const design = designs.find((d) => d.id === designId);
-    if (design) addNewDesign(design, at);
+    if (design) addNewDesign(design, at, cue);
   };
 
   // Also takes a design that isn't in `designs` yet (just created in the scene editor)
-  const addNewDesign = (design: Design, at?: number) => {
-    const once = isScene && cycleOf(design) !== null;
+  const addNewDesign = (design: Design, at?: number, cue: Cue | null = null) => {
+    const once = (isScene || cue !== null) && cycleOf(design) !== null;
     insertAt({
       key: newItemKey(),
       design_id: design.id,
@@ -517,11 +523,12 @@ export function usePlaylistEditor({ reload, setError, designs, playlists, kind }
       repeat_mode: once ? 'times' : 'seconds',
       repeat_count: 1,
       transition: 'cut',
+      cue,
     }, at);
   };
 
   // Nested playlists and scenes default to playing through once
-  const addPlaylist = (playlistId: string, at?: number) => {
+  const addPlaylist = (playlistId: string, at?: number, cue: Cue | null = null) => {
     const playlist = playlists.find((p) => p.id === playlistId);
     if (!playlist || !canAddPlaylist(playlistId)) return;
     insertAt({
@@ -533,6 +540,7 @@ export function usePlaylistEditor({ reload, setError, designs, playlists, kind }
       repeat_mode: 'times',
       repeat_count: 1,
       transition: 'cut',
+      cue,
     }, at);
   };
 
@@ -562,7 +570,8 @@ export function usePlaylistEditor({ reload, setError, designs, playlists, kind }
     const cycle = cycleSeconds(item);
     return effectiveMode(item) === 'times' && cycle !== null ? cycle * item.repeat_count : Math.max(1, item.duration);
   };
-  const totalSeconds = items.reduce((sum, i) => sum + itemSeconds(i), 0);
+  // The loop only; timed events play on top of it
+  const totalSeconds = items.reduce((sum, i) => sum + (i.cue ? 0 : itemSeconds(i)), 0);
 
   // Point one item at another design (a copy saved from the scene editor); its timing stays
   const replaceItemDesign = (key: string, design: Design) => {
@@ -574,6 +583,9 @@ export function usePlaylistEditor({ reload, setError, designs, playlists, kind }
   const updateItem = (key: string, field: 'duration' | 'transition' | 'repeat_mode' | 'repeat_count', value: number | string) => {
     setItems((prev) => prev.map((i) => (i.key === key ? { ...i, [field]: value } : i)));
   };
+  const updateCue = (key: string, cue: Cue) => {
+    setItems((prev) => prev.map((i) => (i.key === key ? { ...i, cue } : i)));
+  };
 
   const payloadItems = (): PlaylistItemInput[] => items.map((i) => ({
     design_id: i.design_id,
@@ -582,6 +594,7 @@ export function usePlaylistEditor({ reload, setError, designs, playlists, kind }
     repeat_mode: effectiveMode(i),
     repeat_count: i.repeat_count,
     transition: i.transition,
+    cue: i.cue,
   }));
 
   /** Saves; returns 'needs-name' for a new playlist/scene without a name. */
@@ -645,7 +658,8 @@ export function usePlaylistEditor({ reload, setError, designs, playlists, kind }
     setItems((prev) => {
       const from = prev.findIndex((i) => i.key === dragKey);
       const to = prev.findIndex((i) => i.key === overKey);
-      if (from < 0 || to < 0) return prev;
+      // Loop items and timed events are separate lists
+      if (from < 0 || to < 0 || !prev[from].cue !== !prev[to].cue) return prev;
       const next = [...prev];
       const [dragged] = next.splice(from, 1);
       next.splice(to, 0, dragged);
@@ -654,12 +668,14 @@ export function usePlaylistEditor({ reload, setError, designs, playlists, kind }
   };
   const dragEnd = () => setDragKey(null);
 
-  // Keyboard alternative to drag reorder
+  // Keyboard alternative to drag reorder; moves past the neighbour in the same list (loop or events)
   const moveItem = (key: string, delta: -1 | 1) => {
     setItems((prev) => {
       const from = prev.findIndex((i) => i.key === key);
-      const to = from + delta;
-      if (from < 0 || to < 0 || to >= prev.length) return prev;
+      if (from < 0) return prev;
+      let to = from + delta;
+      while (to >= 0 && to < prev.length && !prev[to].cue !== !prev[from].cue) to += delta;
+      if (to < 0 || to >= prev.length) return prev;
       const next = [...prev];
       const [moved] = next.splice(from, 1);
       next.splice(to, 0, moved);
@@ -671,7 +687,7 @@ export function usePlaylistEditor({ reload, setError, designs, playlists, kind }
     kind, isScene, noun, saved,
     selectedPlaylist, name, setName, items, mode, setMode, dragKey, hasChanges,
     addablePlaylists, cycleSeconds, effectiveMode, itemSeconds, totalSeconds, payloadItems,
-    startNew, load, addDesign, addNewDesign, addPlaylist, replaceItemDesign, removeItem, updateItem, save, remove, rename, dragStart, dragOver, dragEnd, moveItem,
+    startNew, load, addDesign, addNewDesign, addPlaylist, replaceItemDesign, removeItem, updateItem, updateCue, save, remove, rename, dragStart, dragOver, dragEnd, moveItem,
   };
 }
 
