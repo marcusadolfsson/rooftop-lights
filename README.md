@@ -74,15 +74,17 @@ Every page has a live preview fed over WebSocket, in 2D (the walls unrolled into
 
 ![3D preview](docs/screenshots/design-3d.png)
 
-### Live & Schedule
+### Lights output
+
+The header shows a small live view of what the lights are showing, next to the DMX rate. Click it to open a larger view under the header in its place, which stays open on every page until you close it with × (remembered per browser). It always shows the real output, even while the Design page previews something else.
+
+### Schedule
 
 - A **default** design, scene or show plays whenever nothing else is scheduled.
 
-The header shows a small live view of what the lights are showing, next to the DMX rate. Click it to open a larger view under the header in its place, which stays open on every page until you close it with × (remembered per browser). It always shows the real output, even while the Design page previews something else.
 - **Date schedules** override it between a start date and time and an end date and time, and a priority decides between overlapping schedules.
-- The ArtNet output strip at the top shows exactly what is being sent to the lights right now.
 
-![Live & Schedule page](docs/screenshots/schedule.png)
+![Schedule page](docs/screenshots/schedule.png)
 
 ### Light Layout
 
@@ -181,7 +183,7 @@ The tests copy that database again to a temp file, so the file you pass is never
 | `AUDIO_UDP_PORT` | UDP port for live audio levels (`0` disables) | `7000` |
 | `NODE_ENV` | `production` or `development` | `production` |
 
-Schedule times are evaluated in the container's `TZ`, and the Live & Schedule page shows which zone that is. Local development without Docker needs Node 20.19+ or 22.12+; the images use Node 24.
+Schedule times are evaluated in the container's `TZ`, and the Schedule page shows which zone that is. Local development without Docker needs Node 20.19+ or 22.12+; the images use Node 24.
 
 ### Health check
 

@@ -1,9 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useLocation } from 'react-router-dom';
-import { designsAPI, playlistsAPI, schedulesAPI, layoutAPI, previewAPI, healthAPI } from '../utils/api';
-import LiveLightPreview from '../components/LiveLightPreview';
+import { designsAPI, playlistsAPI, schedulesAPI, previewAPI, healthAPI } from '../utils/api';
 import { useEscapeKey } from '../hooks/useEscapeKey';
-import type { Design, Playlist, Schedule, LayoutData } from '../types';
+import type { Design, Playlist, Schedule } from '../types';
 import { groupByFolder, hasFolders, UNFILED_LABEL } from '../utils/folders';
 
 const ACTIVE_POLL_MS = 30000;
@@ -36,7 +35,6 @@ function parseLocalDate(dateStr: string): Date | null {
 function SchedulerPage() {
   const location = useLocation();
   const isVisible = location.pathname === '/schedule';
-  const [layout, setLayout] = useState<LayoutData | null>(null);
   const [designs, setDesigns] = useState<Design[]>([]);
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [schedules, setSchedules] = useState<Schedule[]>([]);
@@ -109,8 +107,7 @@ function SchedulerPage() {
   // Only the first load shows the loading screen; later refreshes happen in the background
   const loadData = async () => {
     try {
-      const [layoutData, designsData, playlistsData, schedulesData, defaultData, activeData, previewStatus] = await Promise.all([
-        layoutAPI.getLayout(),
+      const [designsData, playlistsData, schedulesData, defaultData, activeData, previewStatus] = await Promise.all([
         designsAPI.getAll(),
         playlistsAPI.getAll(),
         schedulesAPI.getAll(),
@@ -118,7 +115,6 @@ function SchedulerPage() {
         schedulesAPI.getActive(),
         previewAPI.getStatus(),
       ]);
-      setLayout(layoutData);
       setDesigns(designsData);
       setPlaylists(playlistsData);
       setSchedules(schedulesData.filter((s: Schedule) => !s.is_default));
@@ -312,16 +308,6 @@ function SchedulerPage() {
 
   return (
     <div>
-      {/* ArtNet Output Preview */}
-      {layout && (
-        <div className="preview-strip">
-          <div className="preview-strip-header">
-            <div className="preview-strip-title">ArtNet Output</div>
-          </div>
-          <LiveLightPreview walls={layout.walls} active={isVisible} source="output" />
-        </div>
-      )}
-
       <div className="page-header">
         <h1 className="page-title">Schedule</h1>
         <button
