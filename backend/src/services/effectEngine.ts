@@ -1208,6 +1208,17 @@ export class EffectEngine {
       if (t < 0 || t >= strikeFrames + flickers * 5) continue;
       const center = rand(k, 4);
       const tf = t - strikeFrames; // time into the flickers (negative while the bolt is travelling)
+      // The lit area is an irregular blob, not a box: each strike picks its own size around Coverage,
+      // and each row of it gets its own width and a shifted middle
+      const size = Math.min(1, coverage * (0.6 + 0.8 * rand(k, 8)));
+      const rowSpan = (s: number, y: number, len: number) => {
+        const w = Math.max(1, len * size);
+        const mid = center * (len - w) + w / 2;
+        return {
+          mid: Math.max(0, Math.min(len - 1e-6, mid + (rand(k, 10, s, y) * 2 - 1) * w * 0.25)),
+          half: Math.max(0.5, (w * (0.55 + 0.7 * rand(k, 9, s, y))) / 2),
+        };
+      };
 
       if (strike && tf < 5) {
         const head = Math.min(this.rows - 1, Math.floor(t / STRIKE_ROW_FRAMES));
@@ -1216,8 +1227,8 @@ export class EffectEngine {
           const y = this.rows - 1 - d;
           for (const [s, row] of this.getSegments(y, effect.scope).entries()) {
             const len = row.length;
-            const width = Math.max(1, Math.round(len * coverage));
-            const target = Math.round(center * (len - width)) + (width - 1) / 2;
+            // Lands on the middle of the flash on the bottom row
+            const target = rowSpan(s, 0, len).mid - 0.5;
             // Starts 10-40% of the wall to one side, so it always comes in at an angle,
             // with a little jitter per row so it isn't a straight line
             const offset = (rand(k, 5, s) < 0.5 ? -1 : 1) * (0.1 + 0.3 * rand(k, 7, s)) * len;
@@ -1237,11 +1248,15 @@ export class EffectEngine {
       // Each flicker: bright flash that decays; later flickers are dimmer
       const level = (1 - (tf % 5) / 5) * (0.5 + 0.5 * rand(k, 3, f)) * (f === 0 ? 1 : 0.8);
       for (let y = 0; y < this.rows; y++) {
-        for (const row of this.getSegments(y, effect.scope)) {
-          const len = row.length;
-          const width = Math.max(1, Math.round(len * coverage));
-          const startX = Math.round(center * (len - width));
-          for (let j = startX; j < startX + width && j < len; j++) light(row[j].light_id, level);
+        for (const [s, row] of this.getSegments(y, effect.scope).entries()) {
+          const { mid, half } = rowSpan(s, y, row.length);
+          for (let j = 0; j < row.length; j++) {
+            const dist = Math.abs(j + 0.5 - mid);
+            if (dist > half && Math.floor(mid) !== j) continue;
+            // Soft, ragged edge: the outer part is dimmer and drops in and out between flickers
+            if (dist > half * 0.6 && rand(k, 11, s, y * 1000 + j, f) < 0.3) continue;
+            light(row[j].light_id, dist > half * 0.6 ? level * 0.55 : level);
+          }
         }
       }
     }
