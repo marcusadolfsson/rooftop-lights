@@ -10,7 +10,7 @@ const ACTIVE_POLL_MS = 30000;
 // What a schedule plays, as the pickers offer it. A scene is stored like a playlist
 // (design_type 'playlist' + playlist_id); only its kind differs.
 type TargetType = 'static' | 'motion' | 'scene' | 'playlist';
-const TARGET_LABELS: Record<TargetType, string> = { static: 'Static Design', motion: 'Motion Effect', scene: 'Scene', playlist: 'Show' };
+const TARGET_LABELS: Record<TargetType, string> = { static: 'Static Design', motion: 'Effect', scene: 'Scene', playlist: 'Show' };
 const isListTarget = (t: TargetType) => t === 'scene' || t === 'playlist';
 
 /** Picker options grouped by folder (Unfiled first) once anything is in a folder; flat otherwise. */

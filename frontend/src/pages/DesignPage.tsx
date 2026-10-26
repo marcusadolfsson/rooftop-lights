@@ -21,7 +21,7 @@ const PLAYBACK_START_GRACE_MS = 2000;
 
 const TABS: { id: TabType; label: string }[] = [
   { id: 'static', label: 'Static' },
-  { id: 'motion', label: 'Motion' },
+  { id: 'motion', label: 'Effects' },
   { id: 'scenes', label: 'Scenes' },
   { id: 'playlist', label: 'Shows' },
 ];

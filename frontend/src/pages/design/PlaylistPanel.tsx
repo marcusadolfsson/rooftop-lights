@@ -32,7 +32,7 @@ let nextDraftId = 0;
 type PickerType = 'static' | 'motion' | 'scene' | 'playlist';
 const PICKER_TYPES: { type: PickerType; label: string }[] = [
   { type: 'static', label: 'Static' },
-  { type: 'motion', label: 'Motion' },
+  { type: 'motion', label: 'Effects' },
   { type: 'scene', label: 'Scenes' },
   { type: 'playlist', label: 'Shows' },
 ];
@@ -259,7 +259,7 @@ export default function PlaylistPanel({
 
   const renderPickerRow = (entry: PickerEntry) => {
     const isList = entry.type === 'scene' || entry.type === 'playlist';
-    const label = isList ? `Add ${entry.type === 'playlist' ? 'show' : entry.type} ${entry.name} to ${noun}` : `Add ${entry.name} (${entry.type}) to ${noun}`;
+    const label = isList ? `Add ${entry.type === 'playlist' ? 'show' : entry.type} ${entry.name} to ${noun}` : `Add ${entry.name} (${entry.type === 'motion' ? 'effect' : entry.type}) to ${noun}`;
     return (
       <tr
         key={entry.id}
@@ -341,7 +341,7 @@ export default function PlaylistPanel({
           disabled={!!cantCreate}
           title={cantCreate}
         >
-          + New {type}
+          + New {type === 'motion' ? 'effect' : type}
         </button>
       ))}
       {cantCreate && <span className="playlist-add-new-hint">Save the {noun} to make new designs here.</span>}
@@ -409,7 +409,7 @@ export default function PlaylistPanel({
           {label}{' '}
           {item.child_playlist_id
             ? <span className={`playlist-tag${childKind(item.child_playlist_id) === 'scene' ? ' scene-tag' : ''}`}>{KIND_LABEL[childKind(item.child_playlist_id)]}</span>
-            : <span style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }}>({item.design_type})</span>}
+            : <span style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }}>({item.design_type === 'motion' ? 'effect' : item.design_type})</span>}
         </span>
         {item.cue && <CueEditor cue={item.cue} label={label} onChange={(cue) => editor.updateCue(item.key, cue)} />}
         <span className="playlist-item-timing">
@@ -534,7 +534,7 @@ export default function PlaylistPanel({
                 <>
                   <div className="playlist-item editing playlist-item-draft">
                     <span className="playlist-item-name">
-                      New {inlineTarget.type} design{' '}
+                      New {inlineTarget.type === 'motion' ? 'effect' : 'static design'}{' '}
                       <span style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }}>(not saved yet; added here when you save)</span>
                     </span>
                   </div>
