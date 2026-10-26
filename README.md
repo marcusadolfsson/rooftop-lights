@@ -36,7 +36,7 @@ A web app for designing, previewing and scheduling shows on architectural RGBW l
 | Text | Scrolling text |
 | Twinkle | Lights fade in and out at random in the palette colors |
 | Color Fade | The whole roof crossfades through the palette |
-| Lightning | Random strikes of quick white flickers over a background color, optionally led by a bolt that drops from the top row |
+| Lightning | Random strikes of quick flickers in irregular shapes, several at once if you like, optionally led by a bolt that drops from the top row. Per Wall and Per Group strike independently |
 | Fireworks | Bursts that expand from a random point and fade |
 | Fire | Flickering flames, hotter along the bottom row |
 | Strobe | Fast on/off flashing that cycles through the palette |

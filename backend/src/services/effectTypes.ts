@@ -242,6 +242,7 @@ const EFFECT_TYPES: Omit<EffectTypeInfo, 'colorLabels' | 'colorHint' | 'stepFram
     params: {
       frequency: { type: 'number', default: 12, min: 1, max: 60, label: 'Strikes per minute' },
       coverage: { type: 'number', default: 0.5, min: 0.1, max: 1, step: 0.05, label: 'Coverage' },
+      count: { type: 'range', default: [1, 1], min: 1, max: 6, label: 'Strikes at once' },
       strike: { type: 'boolean', default: false, label: 'Strike before flashes' },
     },
   },

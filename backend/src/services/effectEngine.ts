@@ -1200,67 +1200,88 @@ export class EffectEngine {
 
     for (const l of this.lights) frame.set(l.light_id, { ...base });
 
-    // Check this slot and the previous one so strikes near a boundary finish cleanly
-    for (const k of [n - 1, n]) {
-      const start = k * slot + Math.floor(rand(k, 1) * slot * 0.6);
-      const t = realFrame - start;
-      const flickers = 2 + Math.floor(rand(k, 2) * 3);
-      if (t < 0 || t >= strikeFrames + flickers * 5) continue;
-      const center = rand(k, 4);
-      const tf = t - strikeFrames; // time into the flickers (negative while the bolt is travelling)
-      // The lit area is an irregular blob, not a box: each strike picks its own size around Coverage,
-      // and each row of it gets its own width and a shifted middle
-      const size = Math.min(1, coverage * (0.6 + 0.8 * rand(k, 8)));
-      const rowSpan = (s: number, y: number, len: number) => {
-        const w = Math.max(1, len * size);
-        const mid = center * (len - w) + w / 2;
-        return {
-          mid: Math.max(0, Math.min(len - 1e-6, mid + (rand(k, 10, s, y) * 2 - 1) * w * 0.25)),
-          half: Math.max(0.5, (w * (0.55 + 0.7 * rand(k, 9, s, y))) / 2),
-        };
-      };
+    // Each wall / group (with Per Wall or Per Group) strikes on its own schedule; Strikes at once
+    // sets how many strikes each slot can bring, each at its own spot, up to 0.3 s apart
+    const count = range(effect.params?.count, [1, 1], 1, 6).map(Math.round) as [number, number];
+    const segmentCount = this.getSegments(0, effect.scope).length;
 
-      if (strike && tf < 5) {
-        const head = Math.min(this.rows - 1, Math.floor(t / STRIKE_ROW_FRAMES));
-        // Row 0 is the bottom, so the bolt walks down from the top row (d = rows dropped so far)
-        for (let d = 0; d <= head; d++) {
-          const y = this.rows - 1 - d;
-          for (const [s, row] of this.getSegments(y, effect.scope).entries()) {
-            const len = row.length;
-            // Lands on the middle of the flash on the bottom row
-            const target = rowSpan(s, 0, len).mid - 0.5;
-            // Starts 10-40% of the wall to one side, so it always comes in at an angle,
-            // with a little jitter per row so it isn't a straight line
-            const offset = (rand(k, 5, s) < 0.5 ? -1 : 1) * (0.1 + 0.3 * rand(k, 7, s)) * len;
-            const along = this.rows > 1 ? d / (this.rows - 1) : 1;
-            const jitter = d > 0 && d < this.rows - 1 ? Math.round((rand(k, 6, s, d) * 2 - 1)) : 0;
-            const x = Math.round(target + offset * (1 - along)) + jitter;
-            if (x < 0 || x >= len) continue;
-            // The tip is brightest; the path behind it glows, then fades with the first flicker
-            const level = tf >= 0 ? 1 - tf / 5 : d === head ? 1 : 0.6;
-            light(row[x].light_id, level);
-          }
-        }
-      }
-      if (tf < 0) continue;
-
-      const f = Math.floor(tf / 5);
-      // Each flicker: bright flash that decays; later flickers are dimmer
-      const level = (1 - (tf % 5) / 5) * (0.5 + 0.5 * rand(k, 3, f)) * (f === 0 ? 1 : 0.8);
-      for (let y = 0; y < this.rows; y++) {
-        for (const [s, row] of this.getSegments(y, effect.scope).entries()) {
-          const { mid, half } = rowSpan(s, y, row.length);
-          for (let j = 0; j < row.length; j++) {
-            const dist = Math.abs(j + 0.5 - mid);
-            if (dist > half && Math.floor(mid) !== j) continue;
-            // Soft, ragged edge: the outer part is dimmer and drops in and out between flickers
-            if (dist > half * 0.6 && rand(k, 11, s, y * 1000 + j, f) < 0.3) continue;
-            light(row[j].light_id, dist > half * 0.6 ? level * 0.55 : level);
-          }
+    for (let s = 0; s < segmentCount; s++) {
+      // Check this slot and the previous one so strikes near a boundary finish cleanly
+      for (const k of [n - 1, n]) {
+        const many = Math.round(within(count, rand(k, 12, s)));
+        for (let m = 0; m < many; m++) {
+          const start = k * slot + Math.floor(rand(k, 1, s) * slot * 0.6) + (m === 0 ? 0 : Math.floor(rand(k, 13, s, m) * FPS * 0.3));
+          const t = realFrame - start;
+          const flickers = 2 + Math.floor(rand(k, 2, s, m) * 3);
+          if (t < 0 || t >= strikeFrames + flickers * 5) continue;
+          this.lightningStrike(effect.scope, s, [k, s, m], t, strikeFrames, coverage, light);
         }
       }
     }
     return frame;
+  }
+
+  /**
+   * One lightning strike on segment `s` (all rows), `t` frames in. `seed` identifies the strike, so
+   * its spot, size, shape and flicker levels stay fixed while it plays.
+   */
+  private lightningStrike(
+    scope: 'wall' | 'all' | 'group', s: number, seed: number[], t: number, strikeFrames: number,
+    coverage: number, light: (id: number, level: number) => void,
+  ): void {
+    const r = (...n: number[]) => rand(...seed, ...n);
+    const center = r(4);
+    const tf = t - strikeFrames; // time into the flickers (negative while the bolt is travelling)
+    // The lit area is an irregular blob, not a box: each strike picks its own size around Coverage,
+    // and each row of it gets its own width and a shifted middle
+    const size = Math.min(1, coverage * (0.6 + 0.8 * r(8)));
+    const rowSpan = (y: number, len: number) => {
+      const w = Math.max(1, len * size);
+      const mid = center * (len - w) + w / 2;
+      return {
+        mid: Math.max(0, Math.min(len - 1e-6, mid + (r(10, y) * 2 - 1) * w * 0.25)),
+        half: Math.max(0.5, (w * (0.55 + 0.7 * r(9, y))) / 2),
+      };
+    };
+
+    if (strikeFrames > 0 && tf < 5) {
+      const head = Math.min(this.rows - 1, Math.floor(t / STRIKE_ROW_FRAMES));
+      // Row 0 is the bottom, so the bolt walks down from the top row (d = rows dropped so far)
+      for (let d = 0; d <= head; d++) {
+        const y = this.rows - 1 - d;
+        const row = this.getSegments(y, scope)[s];
+        if (!row) continue;
+        const len = row.length;
+        // Lands on the middle of the flash on the bottom row
+        const target = rowSpan(0, len).mid - 0.5;
+        // Starts 10-40% of the wall to one side, so it always comes in at an angle,
+        // with a little jitter per row so it isn't a straight line
+        const offset = (r(5) < 0.5 ? -1 : 1) * (0.1 + 0.3 * r(7)) * len;
+        const along = this.rows > 1 ? d / (this.rows - 1) : 1;
+        const jitter = d > 0 && d < this.rows - 1 ? Math.round(r(6, d) * 2 - 1) : 0;
+        const x = Math.round(target + offset * (1 - along)) + jitter;
+        if (x < 0 || x >= len) continue;
+        // The tip is brightest; the path behind it glows, then fades with the first flicker
+        light(row[x].light_id, tf >= 0 ? 1 - tf / 5 : d === head ? 1 : 0.6);
+      }
+    }
+    if (tf < 0) return;
+
+    const f = Math.floor(tf / 5);
+    // Each flicker: bright flash that decays; later flickers are dimmer
+    const level = (1 - (tf % 5) / 5) * (0.5 + 0.5 * r(3, f)) * (f === 0 ? 1 : 0.8);
+    for (let y = 0; y < this.rows; y++) {
+      const row = this.getSegments(y, scope)[s];
+      if (!row) continue;
+      const { mid, half } = rowSpan(y, row.length);
+      for (let j = 0; j < row.length; j++) {
+        const dist = Math.abs(j + 0.5 - mid);
+        if (dist > half && Math.floor(mid) !== j) continue;
+        // Soft, ragged edge: the outer part is dimmer and drops in and out between flickers
+        if (dist > half * 0.6 && r(11, y * 1000 + j, f) < 0.3) continue;
+        light(row[j].light_id, dist > half * 0.6 ? level * 0.55 : level);
+      }
+    }
   }
 
   // Fireworks - bursts that expand from a random point and fade out (real frames: times are seconds)
