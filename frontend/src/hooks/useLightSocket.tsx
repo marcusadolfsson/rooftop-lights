@@ -27,15 +27,21 @@ const noopSubscribe = () => () => {};
 const getEmptyFrame = () => EMPTY_FRAME;
 
 /**
+ * Which frame to follow: 'frame' is what the server broadcasts (a preview when one runs, else the
+ * lights), 'preview' only previews (empty otherwise), 'output' only what the lights show.
+ */
+export type FrameSource = 'frame' | 'preview' | 'output';
+
+/**
  * Latest frame from the server. Pass enabled=false (e.g. while the page is hidden)
  * to unsubscribe, so the component stops re-rendering on every frame.
- * With previewOnly, the frame is empty unless something is being previewed.
  */
-export function useFrameData(enabled = true, previewOnly = false): FrameData {
+export function useFrameData(enabled = true, source: FrameSource = 'frame'): FrameData {
   const store = useStore();
+  const get = source === 'preview' ? store.getPreviewFrame : source === 'output' ? store.getOutputFrame : store.getFrame;
   return useSyncExternalStore(
     enabled ? store.subscribeFrame : noopSubscribe,
-    enabled ? (previewOnly ? store.getPreviewFrame : store.getFrame) : getEmptyFrame,
+    enabled ? get : getEmptyFrame,
   );
 }
 

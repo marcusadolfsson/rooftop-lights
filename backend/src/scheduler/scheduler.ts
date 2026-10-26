@@ -472,6 +472,8 @@ export class Scheduler {
     let wsFrame: Map<number, RGBW> = BLANK;
     // True when the WebSocket frame is a preview rather than the scheduled output
     let wsIsPreview = false;
+    // What the lights get this frame (the ArtNet frame), when it differs from wsFrame
+    let outputFrame: Map<number, RGBW> | null = null;
 
     try {
       let artnetFrame: Map<number, RGBW>;
@@ -511,6 +513,7 @@ export class Scheduler {
         wsFrame = artnetFrame;
       }
 
+      if (wsFrame !== artnetFrame) outputFrame = artnetFrame;
       if (artnet) {
         this.output(artnet, artnetFrame, isAnimated);
       }
@@ -519,6 +522,7 @@ export class Scheduler {
       logRateLimited(`Scheduler tick failed, outputting blank frame: ${msg}`, err instanceof Error ? err.stack : undefined);
       wsFrame = BLANK;
       wsIsPreview = false;
+      outputFrame = null;
       if (artnet) {
         try {
           this.output(artnet, BLANK, false);
@@ -529,7 +533,7 @@ export class Scheduler {
     }
 
     try {
-      this.broadcastFrame(wsFrame, wsIsPreview);
+      this.broadcastFrame(wsFrame, wsIsPreview, outputFrame);
     } catch (err) {
       logRateLimited(`WebSocket broadcast failed: ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -758,7 +762,7 @@ export class Scheduler {
     }
   }
 
-  private broadcastFrame(frameData: Map<number, RGBW>, isPreview: boolean): void {
+  private broadcastFrame(frameData: Map<number, RGBW>, isPreview: boolean, outputFrame: Map<number, RGBW> | null): void {
     if (this.wsClients.size === 0) return;
 
     // Only send every 3rd frame to reduce bandwidth
@@ -773,12 +777,19 @@ export class Scheduler {
     for (const light of lights) {
       frameObj[light.light_id] = frameData.get(light.light_id) || black;
     }
+    // While a browser-only preview runs, the lights show something else: send that too
+    let outputObj: Record<number, RGBW> | undefined;
+    if (outputFrame) {
+      outputObj = {};
+      for (const light of lights) outputObj[light.light_id] = outputFrame.get(light.light_id) || black;
+    }
 
     const artnet = getArtNetController();
     const message = JSON.stringify({
       type: 'frame',
       data: frameObj,
       preview: isPreview,
+      ...(outputObj ? { output: outputObj } : {}),
       dmxRate: artnet ? artnet.getSendRate() : 0,
     });
 

@@ -318,7 +318,7 @@ function SchedulerPage() {
           <div className="preview-strip-header">
             <div className="preview-strip-title">ArtNet Output</div>
           </div>
-          <LiveLightPreview walls={layout.walls} active={isVisible} />
+          <LiveLightPreview walls={layout.walls} active={isVisible} source="output" />
         </div>
       )}
 

@@ -3,6 +3,7 @@ import { useConnectionStatus } from './hooks/useLightSocket';
 import LayoutPage from './pages/LayoutPage';
 import DesignPage from './pages/DesignPage';
 import SchedulerPage from './pages/SchedulerPage';
+import { OutputMiniButton, OutputPanel, useOutputMonitor } from './components/OutputMonitor';
 
 // Own component so status updates (dmxRate) don't re-render the pages
 function ConnectionIndicator() {
@@ -19,6 +20,7 @@ function ConnectionIndicator() {
 
 function App() {
   const location = useLocation();
+  const monitor = useOutputMonitor();
 
   return (
     <div className="app">
@@ -46,9 +48,11 @@ function App() {
             </NavLink>
           </div>
           <div className="nav-status">
+            <OutputMiniButton monitor={monitor} />
             <ConnectionIndicator />
           </div>
         </div>
+        <OutputPanel monitor={monitor} />
       </nav>
 
       <main className="main-content">

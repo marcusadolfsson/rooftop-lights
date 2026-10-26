@@ -2943,3 +2943,70 @@ body {
   color: var(--text-secondary);
   font-size: 0.75rem;
 }
+
+/* Lights output in the header: mini strip, and the larger view it opens (pinnable) */
+.output-mini {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 6px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 0.375rem;
+  cursor: pointer;
+  line-height: 0;
+}
+.output-mini:hover,
+.output-mini.open {
+  border-color: var(--primary-color);
+}
+.output-mini-canvas {
+  display: block;
+  image-rendering: pixelated;
+}
+.nav {
+  position: relative;
+}
+.output-panel {
+  position: absolute;
+  top: 100%;
+  right: 2rem;
+  z-index: 200;
+  width: min(1100px, calc(100vw - 4rem));
+  margin-top: 0.5rem;
+  padding: 0.75rem;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 0.5rem;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+}
+.output-panel.pinned {
+  /* In the page flow, under the header (the Design preview is the sticky one) */
+  position: static;
+  width: auto;
+  margin: 0 auto;
+  max-width: 1400px;
+  padding: 0 0 0.75rem;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+.output-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.5rem;
+}
+.output-panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.output-panel .preview-strip-grid-wrapper {
+  overflow-x: auto;
+}
+@media (max-width: 768px) {
+  .output-panel {
+    right: 0.75rem;
+    width: calc(100vw - 1.5rem);
+  }
+}

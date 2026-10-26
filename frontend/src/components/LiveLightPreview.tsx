@@ -1,6 +1,6 @@
 import { lazy, memo, Suspense, useCallback } from 'react';
 import type { Light, RGBW, Wall } from '../types';
-import { useFrameData } from '../hooks/useLightSocket';
+import { useFrameData, type FrameSource } from '../hooks/useLightSocket';
 import { rgbwToCss, simulateDefective } from '../utils/color';
 import PreviewStrip from './PreviewStrip';
 
@@ -14,8 +14,8 @@ interface LiveLightPreviewProps {
   // Shown for lights the current frame doesn't cover (e.g. the design being edited)
   fallbackColors?: Record<number, RGBW>;
   showDefective?: boolean;
-  // Ignore the scheduled output: show only previews (and fallbackColors), dark otherwise
-  previewOnly?: boolean;
+  // 'preview': only previews (and fallbackColors), dark otherwise; 'output': what the lights show
+  source?: FrameSource;
 }
 
 const NO_COLORS: Record<number, RGBW> = {};
@@ -23,8 +23,8 @@ const NO_COLORS: Record<number, RGBW> = {};
 /**
  * The only component that re-renders per WebSocket frame; the pages around it don't.
  */
-function LiveLightPreview({ walls, mode = '2d', active, fallbackColors = NO_COLORS, showDefective = false, previewOnly = false }: LiveLightPreviewProps) {
-  const frame = useFrameData(active, previewOnly);
+function LiveLightPreview({ walls, mode = '2d', active, fallbackColors = NO_COLORS, showDefective = false, source = 'frame' }: LiveLightPreviewProps) {
+  const frame = useFrameData(active, source);
 
   // Frame data is raw (unmasked); defective simulation is applied separately
   const colorOf = (lightId: number): RGBW | undefined => frame[lightId] ?? fallbackColors[lightId];
