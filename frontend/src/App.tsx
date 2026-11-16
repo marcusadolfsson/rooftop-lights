@@ -5,14 +5,19 @@ import DesignPage from './pages/DesignPage';
 import SchedulerPage from './pages/SchedulerPage';
 import { OutputMiniButton, OutputPanel, useOutputMonitor } from './components/OutputMonitor';
 
-// Own component so status updates (dmxRate) don't re-render the pages
+// Own component so status updates (dmxRate) don't re-render the pages.
+// Green: app connected and the ArtNet node answers ArtPoll. Red: either one is down.
 function ConnectionIndicator() {
-  const { connected, dmxRate } = useConnectionStatus();
+  const { connected, dmxRate, nodeOnline, nodeName } = useConnectionStatus();
+  const dot = !connected || nodeOnline === false ? 'disconnected' : nodeOnline ? 'connected' : 'checking';
+  const title = !connected ? 'No connection to the server'
+    : nodeOnline === false ? `ArtNet node ${nodeName ?? ''} is not answering ArtPoll; still sending ${dmxRate} DMX pkt/s`
+    : nodeOnline ? `ArtNet node ${nodeName ?? ''} online, sending ${dmxRate} DMX pkt/s`
+    : `Checking ArtNet node; sending ${dmxRate} DMX pkt/s`;
   return (
-    <div className="status-indicator">
-      <span
-        className={`status-dot ${connected ? 'connected' : 'disconnected'}`}
-      />
+    <div className="status-indicator" title={title}>
+      <span className={`status-dot ${dot}`} />
+      {connected && nodeName && <span className="status-node">{nodeOnline === false ? `${nodeName} offline` : nodeName}</span>}
       <span>{connected ? `DMX ${dmxRate} pkt/s` : 'Disconnected'}</span>
     </div>
   );

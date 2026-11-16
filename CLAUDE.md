@@ -109,7 +109,7 @@ Dev and production share port 3030, so run only one at a time. To test changes s
 
 ### WebSocket `/ws`
 
-- **Server sends:** `layout` (walls/lights) once, then `frame` about 10/s (`{ [lightId]: {r,g,b,w} }`, `dmxRate`).
+- **Server sends:** `layout` (walls/lights) once, then `frame` about 10/s (`{ [lightId]: {r,g,b,w} }`, `dmxRate`, `node: {online, name}` for the header).
 - **Client may send:** `{type:"audio", id, level, peak, seq}` (browser mic).
 
 ## Architecture Notes

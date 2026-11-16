@@ -177,6 +177,14 @@ export class ArtNetNodeMonitor {
     };
   }
 
+  /** Small summary sent with every WebSocket frame for the header. */
+  getSummary(now = Date.now()): { online: boolean | null; name: string | null } {
+    const online = this.targetOnline(now);
+    const node = (this.targetIp ? this.nodes.get(this.targetIp) : undefined)
+      ?? [...this.nodes.values()].find(n => now - n.lastSeen < OFFLINE_AFTER_MS);
+    return { online, name: node?.shortName || this.target };
+  }
+
   private targetOnline(now: number): boolean | null {
     if (!this.socket || !this.target || this.pollingSince === null) return null;
     const node = this.targetIp ? this.nodes.get(this.targetIp) : undefined;

@@ -2,6 +2,7 @@ import type Database from 'better-sqlite3';
 import type { WebSocket } from 'ws';
 import { getDatabase } from '../models/database.js';
 import { getArtNetController, ArtNetController } from '../artnet/artnet.js';
+import { getNodeMonitor } from '../artnet/nodeMonitor.js';
 import { getEffectEngine, normalizeMotionEffect, MotionEffect, RGBW, Light } from '../services/effectEngine.js';
 import { findActiveSchedule, ScheduleRow } from './activeSchedule.js';
 import { logRateLimited } from '../utils/rateLimitedLog.js';
@@ -791,6 +792,7 @@ export class Scheduler {
       preview: isPreview,
       ...(outputObj ? { output: outputObj } : {}),
       dmxRate: artnet ? artnet.getSendRate() : 0,
+      node: getNodeMonitor().getSummary(),
     });
 
     for (const client of this.wsClients) {

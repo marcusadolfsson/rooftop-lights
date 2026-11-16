@@ -5,6 +5,9 @@ export type FrameData = Record<number, RGBW>;
 export interface ConnectionStatus {
   connected: boolean;
   dmxRate: number;
+  // The ArtNet node answering ArtPoll: null while unknown or not polled
+  nodeOnline: boolean | null;
+  nodeName: string | null;
 }
 
 type Listener = () => void;
@@ -25,7 +28,7 @@ export class LightSocketStore {
   private previewFrame: FrameData = EMPTY_FRAME;
   // What the lights are showing (differs from `frame` while a browser-only preview runs)
   private outputFrame: FrameData = EMPTY_FRAME;
-  private status: ConnectionStatus = { connected: false, dmxRate: 0 };
+  private status: ConnectionStatus = { connected: false, dmxRate: 0, nodeOnline: null, nodeName: null };
   private frameListeners = new Set<Listener>();
   private statusListeners = new Set<Listener>();
 
@@ -57,7 +60,9 @@ export class LightSocketStore {
   }
 
   private setStatus(next: ConnectionStatus) {
-    if (next.connected === this.status.connected && next.dmxRate === this.status.dmxRate) return;
+    const cur = this.status;
+    if (next.connected === cur.connected && next.dmxRate === cur.dmxRate &&
+        next.nodeOnline === cur.nodeOnline && next.nodeName === cur.nodeName) return;
     this.status = next;
     this.statusListeners.forEach((l) => l());
   }
@@ -97,7 +102,7 @@ export class LightSocketStore {
   }
 
   private handleDisconnected() {
-    this.setStatus({ connected: false, dmxRate: 0 });
+    this.setStatus({ connected: false, dmxRate: 0, nodeOnline: null, nodeName: null });
     // Show a disconnected state rather than a frozen last frame
     if (this.frame !== EMPTY_FRAME) this.setFrame(EMPTY_FRAME);
   }
@@ -111,17 +116,22 @@ export class LightSocketStore {
     ws.onopen = () => {
       if (this.ws !== ws) return;
       this.backoff = INITIAL_BACKOFF_MS;
-      this.setStatus({ connected: true, dmxRate: this.status.dmxRate });
+      this.setStatus({ ...this.status, connected: true });
     };
 
     ws.onmessage = (event) => {
       if (this.ws !== ws) return;
       try {
-        const message = JSON.parse(event.data) as { type: string; data: unknown; preview?: boolean; output?: FrameData; dmxRate?: number };
+        const message = JSON.parse(event.data) as { type: string; data: unknown; preview?: boolean; output?: FrameData; dmxRate?: number; node?: { online: boolean | null; name: string | null } };
         if (message.type === 'frame') {
           this.setFrame((message.data as FrameData) || EMPTY_FRAME, message.preview === true, message.output);
           if (typeof message.dmxRate === 'number') {
-            this.setStatus({ connected: true, dmxRate: message.dmxRate });
+            this.setStatus({
+              connected: true,
+              dmxRate: message.dmxRate,
+              nodeOnline: message.node?.online ?? null,
+              nodeName: message.node?.name ?? null,
+            });
           }
         }
       } catch (e) {
