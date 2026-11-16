@@ -140,6 +140,23 @@ app.get('/health', (req, res) => {
   });
 });
 
+// For uptime monitors (dashboard.onestpete.com): 503 while the ArtNet node isn't
+// answering ArtPoll. Kept apart from /health so a dead node doesn't make the
+// container unhealthy. 200 while still checking or when not polling.
+app.get('/health/artnet', (req, res) => {
+  const s = getNodeMonitor().getStatus();
+  const node = s.nodes.find(n => n.ip === s.targetIp) ?? s.nodes.find(n => n.online);
+  const body = {
+    status: s.targetOnline === false ? 'offline' : s.targetOnline ? 'online' : 'unknown',
+    target: s.target,
+    lastSeen: node ? new Date(node.lastSeen).toISOString() : null,
+    firmware: node?.firmware ?? null,
+    outputting: node ? node.ports.filter(p => p.outputting).map(p => p.port) : [],
+    report: node?.report ?? null,
+  };
+  res.status(s.targetOnline === false ? 503 : 200).json(body);
+});
+
 // Serve static files from the public directory (built frontend)
 const publicPath = path.join(__dirname, '..', 'public');
 app.use(express.static(publicPath));

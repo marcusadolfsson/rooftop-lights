@@ -105,6 +105,7 @@ Dev and production share port 3030, so run only one at a time. To test changes s
 | /api/artnet/config, /status, /test, /nodes | ArtNet; `/nodes` is what the node reports in ArtPollReply |
 | POST /api/audio/level, GET /api/audio/sources, /status | Audio input |
 | GET /health | Status, version, commit, build time, time zone, `artnetNodeOnline` |
+| GET /health/artnet | 503 while the ArtNet node isn't answering ArtPoll (for the dashboard's uptime check and email alert); /health stays 200 |
 
 ### WebSocket `/ws`
 
