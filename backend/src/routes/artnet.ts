@@ -6,6 +6,7 @@ import {
   MAX_UNIVERSE, MIN_REFRESH_RATE, MAX_REFRESH_RATE,
 } from '../artnet/artnet.js';
 import { getScheduler } from '../scheduler/scheduler.js';
+import { getNodeMonitor, pollTargetFor } from '../artnet/nodeMonitor.js';
 
 const router = Router();
 
@@ -79,6 +80,7 @@ router.put('/config', (req: Request, res: Response) => {
   } else {
     initArtNet(config);
   }
+  getNodeMonitor().setTarget(pollTargetFor(config));
 
   res.json({ success: true });
 });
@@ -92,7 +94,13 @@ router.get('/status', (req: Request, res: Response) => {
     dmxData: controller ? Array.from(controller.getDMXData()) : null,
     universes: controller ? controller.getAllDMXData() : null,
     sendRate: controller ? controller.getSendRate() : 0,
+    node: getNodeMonitor().getStatus(),
   });
+});
+
+// What the ArtNet node(s) report in their ArtPollReplies
+router.get('/nodes', (req: Request, res: Response) => {
+  res.json(getNodeMonitor().getStatus());
 });
 
 // Test ArtNet connection (send a brief flash)

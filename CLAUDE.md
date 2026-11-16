@@ -17,6 +17,7 @@ backend/src/
 ├── index.ts                  # Express server, /health, /ws (frames + browser audio), origin/CSRF guard
 ├── models/database.ts        # Schema, idempotent migrations, default layout
 ├── artnet/artnet.ts          # ArtNet sender (singleton), dirty-frame detection, multi-universe
+├── artnet/nodeMonitor.ts     # ArtPoll every 5 s on :6454; node online/offline, ports outputting
 ├── scheduler/
 │   ├── scheduler.ts          # ~30 FPS render loop, playlist player, transitions, preview
 │   └── activeSchedule.ts     # Which schedule is active (local time, TZ)
@@ -101,9 +102,9 @@ Dev and production share port 3030, so run only one at a time. To test changes s
 | /api/folders | List / rename / delete (unfile) folders |
 | /api/schedules, POST /api/schedules/default | Scheduling |
 | /api/preview/* | Browser-only or live preview (effects, inline playlists, startIndex) |
-| /api/artnet/config, /status, /test | ArtNet |
+| /api/artnet/config, /status, /test, /nodes | ArtNet; `/nodes` is what the node reports in ArtPollReply |
 | POST /api/audio/level, GET /api/audio/sources, /status | Audio input |
-| GET /health | Status, version, commit, build time, time zone |
+| GET /health | Status, version, commit, build time, time zone, `artnetNodeOnline` |
 
 ### WebSocket `/ws`
 
@@ -142,6 +143,7 @@ Dev and production share port 3030, so run only one at a time. To test changes s
 ## Development Notes
 
 - The scheduler renders at ~30 FPS and broadcasts every 3rd frame over WebSocket. ArtNet sends only on change, plus a 1 s keepalive.
+- The node monitor ArtPolls the ArtNet target every 5 s; replies come back to UDP 6454 (published in compose). After 20 s without a reply the node shows offline on the Light Layout page and in `/health`, and the log says so. This matters because a node on Hold Last freezes on the last frame when it drops off.
 - AI effect code runs in `node:vm` with a per-frame timeout. It is not a hard security boundary, so keep the app behind auth.
 - Cross-origin POST/PUT/DELETE are rejected unless the origin is in `CORS_ORIGINS`; requests with no Origin (curl, ESP32) are allowed.
 - The frontend opens one WebSocket. Frames go to an external store so hidden pages don't re-render.

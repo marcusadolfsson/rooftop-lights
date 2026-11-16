@@ -8,6 +8,7 @@ import type {
   PlaylistKind,
   Schedule,
   ArtNetConfig,
+  ArtNetNodeStatus,
   LayoutData,
   EffectType,
   StaticDesignData,
@@ -294,6 +295,8 @@ export const artnetAPI = {
     }),
 
   getStatus: () => fetchJSON<{ running: boolean; dmxData: number[] | null }>('/artnet/status'),
+
+  getNodes: () => fetchJSON<ArtNetNodeStatus>('/artnet/nodes'),
 
   test: () =>
     fetchJSON<{ success: boolean; message: string }>('/artnet/test', {

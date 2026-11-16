@@ -221,6 +221,26 @@ export interface ArtNetConfig {
   refreshRate: number;
 }
 
+// What ArtNet nodes report in their ArtPollReplies (GET /api/artnet/nodes)
+export interface ArtNetNodeStatus {
+  target: string | null;
+  targetIp: string | null;
+  polling: boolean;
+  lastPoll: number | null;
+  targetOnline: boolean | null;
+  nodes: {
+    ip: string;
+    shortName: string;
+    longName: string;
+    report: string;
+    firmware: string;
+    mac: string;
+    ports: { port: number; bindIndex: number; universe: number; outputting: boolean }[];
+    lastSeen: number;
+    online: boolean;
+  }[];
+}
+
 export interface LayoutData {
   walls: Wall[];
   groups: WallGroup[];

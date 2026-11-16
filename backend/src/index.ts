@@ -8,6 +8,7 @@ import fs from 'fs';
 
 import { getDatabase, closeDatabase } from './models/database.js';
 import { initArtNet, stopArtNet, ArtNetConfig } from './artnet/artnet.js';
+import { getNodeMonitor, pollTargetFor } from './artnet/nodeMonitor.js';
 import { getScheduler } from './scheduler/scheduler.js';
 import { getEffectEngine } from './services/effectEngine.js';
 import { serverTimeZone, localDateTimeString } from './scheduler/activeSchedule.js';
@@ -134,6 +135,8 @@ app.get('/health', (req, res) => {
     uptime,
     timeZone: serverTimeZone(),
     serverTime: localDateTimeString(),
+    // true/false once the node has had time to answer ArtPoll, null if not polling
+    artnetNodeOnline: getNodeMonitor().getStatus().targetOnline,
   });
 });
 
@@ -244,6 +247,8 @@ async function initialize(): Promise<void> {
   };
 
   initArtNet(config);
+  // ArtPoll the node so a dead node shows up in the UI and /health
+  getNodeMonitor().start(pollTargetFor(config));
   console.log(`ArtNet started in ${config.mode} mode, universe ${config.universe}, ${config.refreshRate} FPS`);
 
   // Initialize effect engine
@@ -285,6 +290,7 @@ function shutdown(): void {
   server.close(() => {
     console.log('Server closed');
     stopArtNet();
+    getNodeMonitor().stop();
     closeDatabase();
     process.exit(0);
   });

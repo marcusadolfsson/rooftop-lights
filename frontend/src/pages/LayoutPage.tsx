@@ -1,7 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, type ReactNode } from 'react';
 import { useLocation } from 'react-router-dom';
 import { layoutAPI, artnetAPI, healthAPI } from '../utils/api';
-import type { Wall, WallGroup, Light, ArtNetConfig, LayoutData } from '../types';
+import type { Wall, WallGroup, Light, ArtNetConfig, ArtNetNodeStatus, LayoutData } from '../types';
 import LightIdPreview from '../components/LightIdPreview';
 import AudioInputsCard from '../components/AudioInputsCard';
 import { useEscapeKey } from '../hooks/useEscapeKey';
@@ -12,6 +12,7 @@ function LayoutPage() {
   const [layout, setLayout] = useState<LayoutData | null>(null);
   const [build, setBuild] = useState<{ version?: string; commit?: string; builtAt?: string | null } | null>(null);
   const [artnetConfig, setArtnetConfig] = useState<ArtNetConfig | null>(null);
+  const [nodeStatus, setNodeStatus] = useState<ArtNetNodeStatus | null>(null);
   const [selectedLight, setSelectedLight] = useState<Light | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -33,6 +34,15 @@ function LayoutPage() {
     if (isVisible) {
       loadData();
     }
+  }, [isVisible]);
+
+  // The node is polled every 5 s on the server; refresh while the page is open
+  useEffect(() => {
+    if (!isVisible) return;
+    const load = () => artnetAPI.getNodes().then(setNodeStatus).catch(() => setNodeStatus(null));
+    load();
+    const timer = window.setInterval(load, 5000);
+    return () => window.clearInterval(timer);
   }, [isVisible]);
 
   // Only the first load shows the loading screen; later refreshes happen in the background
@@ -435,6 +445,7 @@ function LayoutPage() {
             </div>
           </div>
         )}
+        {nodeStatus && <NodeStatusLine status={nodeStatus} />}
       </div>
 
       {/* Live audio inputs for the Audio Level effect */}
@@ -776,6 +787,44 @@ function LayoutPage() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// Whether the ArtNet node answers ArtPoll, and which of its ports are outputting.
+// A node on "Hold Last" keeps showing the last frame when it drops off, so the
+// roof alone can't tell a dead node from a frozen show.
+const portName = (n: number) => (n >= 1 && n <= 26 ? String.fromCharCode(64 + n) : String(n));
+
+function NodeStatusLine({ status }: { status: ArtNetNodeStatus }) {
+  if (!status.polling || !status.target) return null;
+  const node = status.nodes.find(n => n.ip === status.targetIp) ?? status.nodes.find(n => n.online);
+  const ago = (t: number) => {
+    const s = Math.round((Date.now() - t) / 1000);
+    return s < 60 ? `${s}s ago` : s < 3600 ? `${Math.round(s / 60)} min ago` : new Date(t).toLocaleString();
+  };
+  let dot: string, text: ReactNode;
+  if (status.targetOnline === null) {
+    dot = ''; text = 'Checking node…';
+  } else if (status.targetOnline && node) {
+    const out = node.ports.filter(p => p.outputting);
+    dot = 'connected';
+    text = <>
+      <strong>{node.shortName || node.ip}</strong> online · firmware {node.firmware} ·{' '}
+      {out.length ? `outputting on ${out.map(p => `port ${portName(p.port)} (universe ${p.universe})`).join(', ')}` : 'no port outputting'}
+    </>;
+  } else {
+    dot = 'disconnected';
+    text = <>
+      Node {status.target} is not answering ArtPoll
+      {node && <> · last seen {ago(node.lastSeen)}</>}
+    </>;
+  }
+  return (
+    <div className="build-info" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+      <span className={`status-dot ${dot}`} style={dot ? undefined : { backgroundColor: 'var(--text-secondary)' }} />
+      <span>{text}</span>
+      {status.targetOnline && node?.report && <code title="Node report">{node.report}</code>}
     </div>
   );
 }
